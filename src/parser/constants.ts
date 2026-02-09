@@ -60,7 +60,6 @@ export const Phases = {
   StorePowerState: 'StorePowerState',
   StoreSnapshotDeltas: 'StoreSnapshotDeltas',
   WaitForDataVolumesStatus: 'WaitForDataVolumesStatus',
-  WaitForFinalDataVolumesStatus: 'WaitForFinalDataVolumesStatus',
   WaitForFinalSnapshot: 'WaitForFinalSnapshot',
   WaitForFinalSnapshotRemoval: 'WaitForFinalSnapshotRemoval',
   WaitForInitialSnapshot: 'WaitForInitialSnapshot',
@@ -87,7 +86,6 @@ export const WarmOnlyPhases: Set<string> = new Set([
   Phases.WaitForPenultimateSnapshotRemoval,
   Phases.CreateFinalSnapshot,
   Phases.WaitForFinalSnapshot,
-  Phases.WaitForFinalDataVolumesStatus,
   Phases.AddFinalCheckpoint,
   Phases.Finalize,
   Phases.RemoveFinalSnapshot,
@@ -126,7 +124,6 @@ export const WarmMigrationPhases = [
   Phases.WaitForPenultimateSnapshotRemoval,
   Phases.CreateFinalSnapshot,
   Phases.WaitForFinalSnapshot,
-  Phases.WaitForFinalDataVolumesStatus,
   Phases.AddFinalCheckpoint,
   Phases.Finalize,
   Phases.RemoveFinalSnapshot,
@@ -210,7 +207,6 @@ export function phaseToStep(phase: string, isWarm: boolean): string {
     case Phases.WaitForPenultimateSnapshotRemoval:
     case Phases.CreateFinalSnapshot:
     case Phases.WaitForFinalSnapshot:
-    case Phases.WaitForFinalDataVolumesStatus:
     case Phases.AddFinalCheckpoint:
     case Phases.Finalize:
     case Phases.RemoveFinalSnapshot:
