@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
-import type { VM, RawLogEntry } from '../types';
+import type { VM, RawLogEntry, PhaseIteration } from '../types';
 import { PhasePipeline } from './PhasePipeline';
 import { PhaseLogsModal } from './PhaseLogsModal';
 import { VMRawLogsModal } from './VMRawLogsModal';
 import { formatDuration, computePhaseLogSummaries } from '../parser/utils';
 import { getResourceColorClass } from '../utils/badgeUtils';
+import { PrecopyLoopPhasesSet } from '../parser/constants';
 
 interface VMCardProps {
   vm: VM;
@@ -36,6 +37,27 @@ export function VMCard({ vm }: VMCardProps) {
     if (!selectedPhase || !vm.phaseLogs) return [];
     return vm.phaseLogs[selectedPhase] || [];
   }, [selectedPhase, vm.phaseLogs]);
+
+  // Get iterations for selected phase (if it's a precopy loop phase)
+  const selectedPhaseIterations = useMemo((): PhaseIteration[] => {
+    if (!selectedPhase || !PrecopyLoopPhasesSet.has(selectedPhase)) return [];
+    
+    const iterations: PhaseIteration[] = [];
+    for (const ph of vm.phaseHistory || []) {
+      if (ph.name === selectedPhase && ph.iteration) {
+        const durationMs = ph.startedAt && ph.endedAt
+          ? new Date(ph.endedAt).getTime() - new Date(ph.startedAt).getTime()
+          : undefined;
+        iterations.push({
+          iteration: ph.iteration,
+          startedAt: new Date(ph.startedAt),
+          endedAt: ph.endedAt ? new Date(ph.endedAt) : undefined,
+          durationMs,
+        });
+      }
+    }
+    return iterations.sort((a, b) => a.iteration - b.iteration);
+  }, [selectedPhase, vm.phaseHistory]);
 
   // Count total logs across all phases
   const totalLogs = useMemo(() => {
@@ -159,6 +181,7 @@ export function VMCard({ vm }: VMCardProps) {
           vmName={vm.name}
           logs={selectedPhaseLogs}
           summary={phaseSummaries[selectedPhase]}
+          iterations={selectedPhaseIterations}
           onClose={() => setSelectedPhase(null)}
         />
       )}

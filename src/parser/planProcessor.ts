@@ -1,6 +1,6 @@
 import type { LogEntry, Plan, Condition, RawLogEntry } from '../types';
 import { LogStore } from './LogStore';
-import { PlanStatuses, Phases, ConditionStatus } from './constants';
+import { PlanStatuses, Phases, ConditionStatus, PrecopyLoopPhasesSet, PrecopyLoopStartPhase } from './constants';
 import { getVMInfo, truncate, getStringFromMap } from './utils';
 
 /**
@@ -207,6 +207,20 @@ export function ensureVMExists(plan: Plan, entry: LogEntry, ts: Date): void {
 }
 
 /**
+ * Get the current precopy loop iteration for a VM
+ */
+function getCurrentPrecopyIteration(vm: { phaseHistory: { name: string; iteration?: number }[] }): number {
+  // Find the highest iteration number from precopy loop phases
+  let maxIteration = 0;
+  for (const phase of vm.phaseHistory) {
+    if (PrecopyLoopPhasesSet.has(phase.name) && phase.iteration) {
+      maxIteration = Math.max(maxIteration, phase.iteration);
+    }
+  }
+  return maxIteration;
+}
+
+/**
  * Process VM phase updates
  */
 function processVMPhase(store: LogStore, plan: Plan, entry: LogEntry, ts: Date): void {
@@ -243,21 +257,37 @@ function processVMPhase(store: LogStore, plan: Plan, entry: LogEntry, ts: Date):
       }
     }
 
+    // Determine iteration number for precopy loop phases
+    let iteration: number | undefined;
+    if (PrecopyLoopPhasesSet.has(entry.phase)) {
+      const currentIteration = getCurrentPrecopyIteration(vm);
+      
+      if (entry.phase === PrecopyLoopStartPhase) {
+        // Starting a new loop iteration
+        iteration = currentIteration + 1;
+      } else {
+        // Continuation of current iteration (or first iteration if none yet)
+        iteration = currentIteration || 1;
+      }
+    }
+
     // Start new phase
     vm.currentPhase = entry.phase;
     vm.phaseHistory.push({
       name: entry.phase,
       step: '',
       startedAt: ts,
+      iteration,
     });
 
+    const iterationSuffix = iteration ? ` (iteration ${iteration})` : '';
     store.addEvent({
       timestamp: entry.ts,
       type: 'phase_change',
       planName: plan.name,
       namespace: plan.namespace,
       vmName,
-      description: `VM entered phase: ${entry.phase}`,
+      description: `VM entered phase: ${entry.phase}${iterationSuffix}`,
       phase: entry.phase,
     });
   }

@@ -16,6 +16,7 @@ export interface PhaseInfo {
   step: string;
   startedAt: Date;
   endedAt?: Date;
+  iteration?: number; // For phases that can repeat (precopy loop)
 }
 
 export interface PhaseSummaryItem {
@@ -61,6 +62,14 @@ export interface PhaseLogSummary {
   totalLogs: number;
   groupedLogs: GroupedLogEntry[];
   summaryItems?: PhaseSummaryItem[];
+}
+
+// Iteration info for precopy loop phases
+export interface PhaseIteration {
+  iteration: number;
+  startedAt: Date;
+  endedAt?: Date;
+  durationMs?: number;
 }
 
 export interface VM {

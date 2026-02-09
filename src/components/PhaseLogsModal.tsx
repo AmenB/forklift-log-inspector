@@ -1,39 +1,130 @@
 import { useCallback, useState, useMemo } from 'react';
-import type { RawLogEntry, PhaseLogSummary, GroupedLogEntry } from '../types';
+import type { RawLogEntry, PhaseLogSummary, GroupedLogEntry, PhaseIteration } from '../types';
 import { formatDateTime } from '../utils/dateUtils';
 import { getLevelColorClasses, getLevelSolidBadgeClass } from '../utils/badgeUtils';
 import { Modal, CopyButton, SearchHighlight, formatRawJson } from './common';
+import { formatDuration } from '../parser/utils';
 
 interface PhaseLogsModalProps {
   phase: string;
   vmName?: string;
   logs: RawLogEntry[];
   summary?: PhaseLogSummary;
+  iterations?: PhaseIteration[];
   onClose: () => void;
 }
 
-export function PhaseLogsModal({ phase, vmName, logs, summary, onClose }: PhaseLogsModalProps) {
+export function PhaseLogsModal({ phase, vmName, logs, summary, iterations, onClose }: PhaseLogsModalProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [levelFilter, setLevelFilter] = useState<string>('all');
-  const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedIterations, setExpandedIterations] = useState<Set<number>>(new Set([1])); // First iteration expanded by default
 
-  const toggleGroup = useCallback((index: number) => {
+  const hasMultipleIterations = iterations && iterations.length > 1;
+
+  const toggleGroup = useCallback((key: string) => {
     setExpandedGroups(prev => {
       const next = new Set(prev);
-      if (next.has(index)) {
-        next.delete(index);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(index);
+        next.add(key);
       }
       return next;
     });
   }, []);
 
-  // Filter grouped logs
-  const filteredGroupedLogs = useMemo(() => {
-    if (!summary?.groupedLogs) return [];
+  const toggleIteration = useCallback((iteration: number) => {
+    setExpandedIterations(prev => {
+      const next = new Set(prev);
+      if (next.has(iteration)) {
+        next.delete(iteration);
+      } else {
+        next.add(iteration);
+      }
+      return next;
+    });
+  }, []);
+
+  // Group logs by iteration
+  const logsByIteration = useMemo(() => {
+    if (!hasMultipleIterations || !iterations) return null;
+
+    const iterationLogs: Map<number, RawLogEntry[]> = new Map();
     
-    let result = summary.groupedLogs;
+    // Initialize all iterations
+    for (const iter of iterations) {
+      iterationLogs.set(iter.iteration, []);
+    }
+
+    // Assign logs to iterations based on timestamp
+    for (const log of logs) {
+      const logTime = new Date(log.timestamp).getTime();
+      
+      // Find which iteration this log belongs to
+      for (const iter of iterations) {
+        const startTime = iter.startedAt.getTime();
+        const endTime = iter.endedAt ? iter.endedAt.getTime() : Infinity;
+        
+        if (logTime >= startTime && logTime <= endTime) {
+          iterationLogs.get(iter.iteration)?.push(log);
+          break;
+        }
+      }
+    }
+
+    return iterationLogs;
+  }, [logs, iterations, hasMultipleIterations]);
+
+  // Group logs within each iteration (or all logs if no iterations)
+  const groupedLogsByIteration = useMemo((): Map<number | 'all', GroupedLogEntry[]> => {
+    if (!hasMultipleIterations || !logsByIteration) {
+      // No iterations - return single group with all logs
+      const result = new Map<number | 'all', GroupedLogEntry[]>();
+      result.set('all', summary?.groupedLogs || []);
+      return result;
+    }
+
+    const result = new Map<number | 'all', GroupedLogEntry[]>();
+    
+    for (const [iteration, iterLogs] of logsByIteration) {
+      // Group logs for this iteration
+      const messageGroups = new Map<string, GroupedLogEntry>();
+      
+      for (const log of iterLogs) {
+        const key = `${log.level}:${log.message}`;
+        const existing = messageGroups.get(key);
+        
+        if (existing) {
+          existing.count++;
+          existing.entries.push(log);
+          if (log.timestamp > existing.lastSeen) {
+            existing.lastSeen = log.timestamp;
+          }
+          if (log.timestamp < existing.firstSeen) {
+            existing.firstSeen = log.timestamp;
+          }
+        } else {
+          messageGroups.set(key, {
+            message: log.message,
+            count: 1,
+            firstSeen: log.timestamp,
+            lastSeen: log.timestamp,
+            level: log.level,
+            entries: [log],
+          });
+        }
+      }
+      
+      result.set(iteration, Array.from(messageGroups.values()));
+    }
+
+    return result;
+  }, [logsByIteration, hasMultipleIterations, summary?.groupedLogs]);
+
+  // Filter grouped logs based on search and level
+  const filterGroupedLogs = useCallback((groups: GroupedLogEntry[]): GroupedLogEntry[] => {
+    let result = groups;
 
     if (levelFilter !== 'all') {
       result = result.filter((group) => group.level === levelFilter || (levelFilter === 'warning' && group.level === 'warn'));
@@ -47,7 +138,7 @@ export function PhaseLogsModal({ phase, vmName, logs, summary, onClose }: PhaseL
     }
 
     return result;
-  }, [summary, searchQuery, levelFilter]);
+  }, [levelFilter, searchQuery]);
 
   // Count unique messages and total
   const uniqueCount = summary?.groupedLogs?.length || 0;
@@ -137,20 +228,97 @@ export function PhaseLogsModal({ phase, vmName, logs, summary, onClose }: PhaseL
 
       {/* Grouped logs list */}
       <div className="p-4 space-y-3">
-        {filteredGroupedLogs.length === 0 ? (
-          <div className="text-center py-8 text-slate-500 dark:text-gray-400">
-            No logs matching your criteria
+        {hasMultipleIterations && iterations ? (
+          // Show logs grouped by iteration/cycle
+          <div className="space-y-4">
+            {iterations.map((iter) => {
+              const iterLogs = groupedLogsByIteration.get(iter.iteration) || [];
+              const filteredLogs = filterGroupedLogs(iterLogs);
+              const isExpanded = expandedIterations.has(iter.iteration);
+              const iterLogCount = iterLogs.reduce((sum, g) => sum + g.count, 0);
+              
+              return (
+                <div key={iter.iteration} className="border border-cyan-200 dark:border-cyan-800 rounded-lg overflow-hidden">
+                  {/* Iteration header */}
+                  <button
+                    onClick={() => toggleIteration(iter.iteration)}
+                    className="w-full px-4 py-3 bg-cyan-50 dark:bg-cyan-900/30 flex items-center justify-between hover:bg-cyan-100 dark:hover:bg-cyan-900/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <svg
+                        className={`w-4 h-4 text-cyan-600 dark:text-cyan-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      <span className="font-semibold text-cyan-700 dark:text-cyan-300">
+                        Cycle {iter.iteration}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-500 text-white">
+                        {iterLogCount} log{iterLogCount !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm text-slate-600 dark:text-gray-400">
+                      {iter.durationMs && (
+                        <span className="text-cyan-600 dark:text-cyan-400 font-medium">
+                          {formatDuration(iter.durationMs)}
+                        </span>
+                      )}
+                      <span className="text-xs">
+                        {formatDateTime(iter.startedAt.toISOString())}
+                        {iter.endedAt && ` - ${formatDateTime(iter.endedAt.toISOString())}`}
+                      </span>
+                    </div>
+                  </button>
+                  
+                  {/* Iteration logs */}
+                  {isExpanded && (
+                    <div className="p-3 space-y-2 bg-white dark:bg-slate-800">
+                      {filteredLogs.length === 0 ? (
+                        <div className="text-center py-4 text-slate-500 dark:text-gray-400 text-sm">
+                          No logs matching your criteria in this cycle
+                        </div>
+                      ) : (
+                        filteredLogs.map((group, idx) => (
+                          <LogGroupCard
+                            key={`${iter.iteration}-${idx}`}
+                            group={group}
+                            isExpanded={expandedGroups.has(`${iter.iteration}-${idx}`)}
+                            onToggle={() => toggleGroup(`${iter.iteration}-${idx}`)}
+                            searchQuery={searchQuery}
+                          />
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
-          filteredGroupedLogs.map((group, idx) => (
-            <LogGroupCard
-              key={idx}
-              group={group}
-              isExpanded={expandedGroups.has(idx)}
-              onToggle={() => toggleGroup(idx)}
-              searchQuery={searchQuery}
-            />
-          ))
+          // Single iteration or no iteration info - show flat list
+          (() => {
+            const allLogs = groupedLogsByIteration.get('all') || summary?.groupedLogs || [];
+            const filteredLogs = filterGroupedLogs(allLogs);
+            
+            return filteredLogs.length === 0 ? (
+              <div className="text-center py-8 text-slate-500 dark:text-gray-400">
+                No logs matching your criteria
+              </div>
+            ) : (
+              filteredLogs.map((group, idx) => (
+                <LogGroupCard
+                  key={idx}
+                  group={group}
+                  isExpanded={expandedGroups.has(`all-${idx}`)}
+                  onToggle={() => toggleGroup(`all-${idx}`)}
+                  searchQuery={searchQuery}
+                />
+              ))
+            );
+          })()
         )}
       </div>
     </Modal>

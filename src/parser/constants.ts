@@ -69,6 +69,25 @@ export const Phases = {
   WaitForSnapshot: 'WaitForSnapshot',
 } as const;
 
+// Precopy loop phases (can repeat multiple times in warm migration)
+// Order: CopyDisks -> CopyingPaused -> RemovePreviousSnapshot -> WaitForPreviousSnapshotRemoval
+//        -> CreateSnapshot -> WaitForSnapshot -> StoreSnapshotDeltas -> AddCheckpoint
+export const PrecopyLoopPhases: string[] = [
+  Phases.CopyDisks,
+  Phases.CopyingPaused,
+  Phases.RemovePreviousSnapshot,
+  Phases.WaitForPreviousSnapshotRemoval,
+  Phases.CreateSnapshot,
+  Phases.WaitForSnapshot,
+  Phases.StoreSnapshotDeltas,
+  Phases.AddCheckpoint,
+];
+
+export const PrecopyLoopPhasesSet: Set<string> = new Set(PrecopyLoopPhases);
+
+// First phase of the precopy loop (used to detect new iterations)
+export const PrecopyLoopStartPhase = Phases.CopyDisks;
+
 // Warm-only phases
 export const WarmOnlyPhases: Set<string> = new Set([
   Phases.CreateInitialSnapshot,

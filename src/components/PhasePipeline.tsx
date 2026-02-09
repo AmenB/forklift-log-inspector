@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import type { VM, PhaseLogSummary } from '../types';
-import { getPhasesForMigrationType } from '../parser/constants';
+import type { VM, PhaseLogSummary, PhaseInfo } from '../types';
+import { getPhasesForMigrationType, PrecopyLoopPhasesSet, PrecopyLoopPhases } from '../parser/constants';
 import { formatDuration } from '../parser/utils';
 
 interface PhasePipelineProps {
@@ -52,17 +52,66 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
     return [...knownPhases, ...unknownPhases];
   }, [knownPhases, unknownPhases]);
 
-  // Build phase times map from phaseHistory
+  // Build phase times map from phaseHistory (aggregates iterations for loop phases)
   const phaseTimes = useMemo(() => {
     const map = new Map<string, { startedAt?: Date; endedAt?: Date; durationMs?: number }>();
     for (const ph of vm.phaseHistory || []) {
       const durationMs = ph.startedAt && ph.endedAt
         ? new Date(ph.endedAt).getTime() - new Date(ph.startedAt).getTime()
         : undefined;
-      map.set(ph.name, { startedAt: ph.startedAt, endedAt: ph.endedAt, durationMs });
+      
+      const existing = map.get(ph.name);
+      if (existing && durationMs) {
+        // Aggregate duration for repeated phases (precopy loop)
+        map.set(ph.name, {
+          startedAt: existing.startedAt,
+          endedAt: ph.endedAt,
+          durationMs: (existing.durationMs || 0) + durationMs,
+        });
+      } else {
+        map.set(ph.name, { startedAt: ph.startedAt, endedAt: ph.endedAt, durationMs });
+      }
     }
     return map;
   }, [vm.phaseHistory]);
+
+  // Track iteration counts for precopy loop phases
+  const phaseIterations = useMemo(() => {
+    const map = new Map<string, { count: number; iterations: PhaseInfo[] }>();
+    for (const ph of vm.phaseHistory || []) {
+      if (PrecopyLoopPhasesSet.has(ph.name)) {
+        const existing = map.get(ph.name);
+        if (existing) {
+          existing.count++;
+          existing.iterations.push(ph);
+        } else {
+          map.set(ph.name, { count: 1, iterations: [ph] });
+        }
+      }
+    }
+    return map;
+  }, [vm.phaseHistory]);
+
+  // Get the maximum number of precopy loop iterations
+  const maxPrecopyIterations = useMemo(() => {
+    let max = 0;
+    for (const ph of vm.phaseHistory || []) {
+      if (ph.iteration && ph.iteration > max) {
+        max = ph.iteration;
+      }
+    }
+    return max;
+  }, [vm.phaseHistory]);
+
+  // Check if a phase is part of the precopy loop
+  const isPrecopyLoopPhase = (phase: string): boolean => {
+    return PrecopyLoopPhasesSet.has(phase);
+  };
+
+  // Get iteration count for a phase
+  const getPhaseIterationCount = (phase: string): number => {
+    return phaseIterations.get(phase)?.count || 0;
+  };
 
   // Get duration in ms for a phase
   const getPhaseDurationMs = (phase: string): number | null => {
@@ -158,8 +207,29 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
     return !knownPhasesSet.has(phase);
   };
 
+  // Check if this is the first phase of the precopy loop
+  const isFirstPrecopyLoopPhase = (phase: string): boolean => {
+    return phase === PrecopyLoopPhases[0];
+  };
+
+  // Check if this is the last phase of the precopy loop
+  const isLastPrecopyLoopPhase = (phase: string): boolean => {
+    return phase === PrecopyLoopPhases[PrecopyLoopPhases.length - 1];
+  };
+
   return (
     <div className="w-full">
+      {/* Show precopy loop indicator if there are multiple iterations */}
+      {maxPrecopyIterations > 1 && (
+        <div className="mb-2 flex items-center gap-2">
+          <span className="text-xs font-medium text-cyan-600 dark:text-cyan-400 bg-cyan-100 dark:bg-cyan-900/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Precopy Loop: {maxPrecopyIterations} iterations
+          </span>
+        </div>
+      )}
       <div className="flex flex-wrap items-start gap-y-4 gap-x-0.5">
         {phases.map((phase, index) => {
           const counts = getPhaseCounts(phase);
@@ -169,9 +239,13 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
           const didRun = hasPhaseRun(phase);
           const phaseWidth = didRun ? getPhaseWidth(phase) : MIN_WIDTH;
           const isUnknown = isUnknownPhase(phase);
+          const isLoopPhase = isPrecopyLoopPhase(phase);
+          const iterationCount = getPhaseIterationCount(phase);
+          const isFirstLoop = isFirstPrecopyLoopPhase(phase);
+          const isLastLoop = isLastPrecopyLoopPhase(phase);
 
           // Determine phase status
-          let status: 'notRun' | 'running' | 'completed' | 'error' | 'unknown' = 'notRun';
+          let status: 'notRun' | 'running' | 'completed' | 'error' | 'unknown' | 'loop' = 'notRun';
           if (isUnknown && didRun) {
             status = counts.errors > 0 ? 'error' : 'unknown';
           } else if (!didRun) {
@@ -180,6 +254,8 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
             status = 'running';
           } else if (counts.errors > 0) {
             status = 'error';
+          } else if (isLoopPhase && iterationCount > 1) {
+            status = 'loop';
           } else {
             status = 'completed';
           }
@@ -204,6 +280,13 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
                 </div>
               )}
               
+              {/* Loop start indicator */}
+              {isFirstLoop && didRun && maxPrecopyIterations > 1 && (
+                <div className="flex items-center mr-0.5">
+                  <div className="text-cyan-500 dark:text-cyan-400 text-lg font-bold" title="Precopy loop start">⟳</div>
+                </div>
+              )}
+              
               {/* Phase box with name and duration */}
               <div className="relative flex flex-col items-center">
                 {/* Badge - log count or question mark */}
@@ -219,7 +302,9 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
                             ? 'bg-orange-500 text-white'
                             : isUnknown
                               ? 'bg-purple-500 text-white'
-                              : 'bg-blue-500 text-white'
+                              : status === 'loop'
+                                ? 'bg-cyan-500 text-white'
+                                : 'bg-blue-500 text-white'
                         }
                       `}
                     >
@@ -231,6 +316,15 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
                     </span>
                   )}
                 </div>
+
+                {/* Iteration count badge for loop phases */}
+                {isLoopPhase && iterationCount > 1 && (
+                  <div className="absolute -top-2.5 -left-1.5 z-10">
+                    <span className="min-w-[20px] h-[20px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-cyan-500 text-white shadow-sm" title={`${iterationCount} iterations`}>
+                      ×{iterationCount}
+                    </span>
+                  </div>
+                )}
 
                 {/* Phase button */}
                 <button
@@ -247,12 +341,14 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
                           ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 border-2 border-solid border-red-500'
                           : status === 'unknown'
                             ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border-2 border-solid border-purple-500'
-                            : 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border-2 border-solid border-green-500'
+                            : status === 'loop'
+                              ? 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border-2 border-solid border-cyan-500'
+                              : 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border-2 border-solid border-green-500'
                     }
                     ${hasLogs ? 'cursor-pointer hover:shadow-md' : 'cursor-default'}
                     ${isCurrent ? 'ring-2 ring-teal-400 ring-offset-1 dark:ring-offset-slate-800' : ''}
                   `}
-                  title={`${phase}${isUnknown ? ' (Unknown Phase)' : ''}${duration ? ` (${duration})` : ''}${hasLogs ? ` - ${counts.total} logs` : ''}`}
+                  title={`${phase}${isUnknown ? ' (Unknown Phase)' : ''}${isLoopPhase && iterationCount > 1 ? ` (${iterationCount} iterations)` : ''}${duration ? ` (${duration} total)` : ''}${hasLogs ? ` - ${counts.total} logs` : ''}`}
                 >
                   <span className="block truncate text-center leading-tight">
                     {getShortPhaseName(phase)}
@@ -265,11 +361,20 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
                     ? 'text-gray-400 dark:text-gray-600' 
                     : status === 'unknown'
                       ? 'text-purple-600 dark:text-purple-400'
-                      : 'text-green-600 dark:text-green-400'
+                      : status === 'loop'
+                        ? 'text-cyan-600 dark:text-cyan-400'
+                        : 'text-green-600 dark:text-green-400'
                 }`}>
                   {duration || ''}
                 </span>
               </div>
+
+              {/* Loop end indicator with back arrow */}
+              {isLastLoop && didRun && maxPrecopyIterations > 1 && (
+                <div className="flex items-center ml-0.5">
+                  <div className="text-cyan-500 dark:text-cyan-400 text-xs font-medium" title="Loop back to CopyDisks">↺</div>
+                </div>
+              )}
 
               {/* Connector line */}
               {index < phases.length - 1 && (
