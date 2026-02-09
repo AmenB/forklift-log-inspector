@@ -3,6 +3,9 @@ import type { VM, PhaseLogSummary, PhaseInfo } from '../types';
 import { getPhasesForMigrationType, PrecopyLoopPhasesSet, PrecopyLoopPhases } from '../parser/constants';
 import { formatDuration } from '../parser/utils';
 
+// Secret dev mode: add ?dev=true to the URL to highlight unknown phases in purple
+const isDevMode = () => new URLSearchParams(window.location.search).has('dev');
+
 interface PhasePipelineProps {
   vm: VM;
   phaseSummaries: Record<string, PhaseLogSummary>;
@@ -17,40 +20,112 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
   const knownPhases = getPhasesForMigrationType(vm.migrationType);
   const knownPhasesSet = new Set(knownPhases);
   
-  // Find unknown phases from phase history, phase logs, and summaries
-  const unknownPhases = useMemo(() => {
-    const unknown = new Set<string>();
-    
-    // Check phase history
+  // Build final phase list with unknown phases inserted at the correct position
+  // based on where they appeared in the phaseHistory relative to known phases.
+  const phases = useMemo(() => {
+    // Collect all unknown phases and figure out where each one appeared
+    const unknownPhasesSet = new Set<string>();
+
+    // Check phase history, phase logs, and summaries for unknown phases
     for (const ph of vm.phaseHistory || []) {
-      if (!knownPhasesSet.has(ph.name)) {
-        unknown.add(ph.name);
-      }
+      if (!knownPhasesSet.has(ph.name)) unknownPhasesSet.add(ph.name);
     }
-    
-    // Check phase logs
     if (vm.phaseLogs) {
       for (const phase of Object.keys(vm.phaseLogs)) {
-        if (!knownPhasesSet.has(phase)) {
-          unknown.add(phase);
+        if (!knownPhasesSet.has(phase)) unknownPhasesSet.add(phase);
+      }
+    }
+    for (const phase of Object.keys(phaseSummaries)) {
+      if (!knownPhasesSet.has(phase)) unknownPhasesSet.add(phase);
+    }
+
+    if (unknownPhasesSet.size === 0) {
+      return [...knownPhases];
+    }
+
+    // For each unknown phase, find which known phase it appeared after
+    // by walking the phaseHistory (deduplicated, first occurrence only)
+    const seenPhases: string[] = [];
+    const seen = new Set<string>();
+    for (const ph of vm.phaseHistory || []) {
+      if (!seen.has(ph.name)) {
+        seen.add(ph.name);
+        seenPhases.push(ph.name);
+      }
+    }
+
+    // Map: unknown phase -> the known phase it should be inserted after
+    const insertAfter = new Map<string, string | null>();
+    for (const unknown of unknownPhasesSet) {
+      const idx = seenPhases.indexOf(unknown);
+      if (idx === -1) {
+        // Not in history (only in logs/summaries) - put at end
+        insertAfter.set(unknown, null);
+        continue;
+      }
+      // Walk backwards from this phase to find the nearest known phase before it
+      let afterKnown: string | null = null;
+      for (let i = idx - 1; i >= 0; i--) {
+        if (knownPhasesSet.has(seenPhases[i])) {
+          afterKnown = seenPhases[i];
+          break;
         }
       }
+      insertAfter.set(unknown, afterKnown);
     }
-    
-    // Check phase summaries
-    for (const phase of Object.keys(phaseSummaries)) {
-      if (!knownPhasesSet.has(phase)) {
-        unknown.add(phase);
+
+    // Group unknown phases by their insertion point
+    const unknownsAfterKnown = new Map<string | null, string[]>();
+    for (const [unknown, after] of insertAfter) {
+      if (!unknownsAfterKnown.has(after)) {
+        unknownsAfterKnown.set(after, []);
+      }
+      unknownsAfterKnown.get(after)!.push(unknown);
+    }
+
+    // Sort unknown phases within each group by their order in phaseHistory
+    for (const [, unknowns] of unknownsAfterKnown) {
+      unknowns.sort((a, b) => {
+        const idxA = seenPhases.indexOf(a);
+        const idxB = seenPhases.indexOf(b);
+        if (idxA === -1 && idxB === -1) return a.localeCompare(b);
+        if (idxA === -1) return 1;
+        if (idxB === -1) return -1;
+        return idxA - idxB;
+      });
+    }
+
+    // Build final list: insert unknowns that appear before any known phase first,
+    // then interleave known phases with their trailing unknowns
+    const result: string[] = [];
+
+    // Unknowns before any known phase (afterKnown === null but appeared first in history)
+    const beforeAll = unknownsAfterKnown.get(null) || [];
+    // Filter: only those that actually have no preceding known phase
+    // Others with null go at the end
+    const atEnd: string[] = [];
+    for (const u of beforeAll) {
+      const idx = seenPhases.indexOf(u);
+      if (idx !== -1 && idx < seenPhases.findIndex(p => knownPhasesSet.has(p))) {
+        result.push(u);
+      } else {
+        atEnd.push(u);
       }
     }
-    
-    return Array.from(unknown).sort();
-  }, [vm.phaseHistory, vm.phaseLogs, phaseSummaries, knownPhasesSet]);
-  
-  // Combine known and unknown phases
-  const phases = useMemo(() => {
-    return [...knownPhases, ...unknownPhases];
-  }, [knownPhases, unknownPhases]);
+
+    for (const known of knownPhases) {
+      result.push(known);
+      const trailing = unknownsAfterKnown.get(known);
+      if (trailing) {
+        result.push(...trailing);
+      }
+    }
+
+    // Append any remaining unknowns at end
+    result.push(...atEnd);
+
+    return result;
+  }, [knownPhases, knownPhasesSet, vm.phaseHistory, vm.phaseLogs, phaseSummaries]);
 
   // Build phase times map from phaseHistory (aggregates iterations for loop phases)
   const phaseTimes = useMemo(() => {
@@ -239,6 +314,8 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
           const didRun = hasPhaseRun(phase);
           const phaseWidth = didRun ? getPhaseWidth(phase) : MIN_WIDTH;
           const isUnknown = isUnknownPhase(phase);
+          const devMode = isDevMode();
+          const showAsUnknown = isUnknown && devMode; // Only highlight as unknown in dev mode
           const isLoopPhase = isPrecopyLoopPhase(phase);
           const iterationCount = getPhaseIterationCount(phase);
           const isFirstLoop = isFirstPrecopyLoopPhase(phase);
@@ -246,7 +323,7 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
 
           // Determine phase status
           let status: 'notRun' | 'running' | 'completed' | 'error' | 'unknown' | 'loop' = 'notRun';
-          if (isUnknown && didRun) {
+          if (showAsUnknown && didRun) {
             status = counts.errors > 0 ? 'error' : 'unknown';
           } else if (!didRun) {
             status = 'notRun';
@@ -260,25 +337,17 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
             status = 'completed';
           }
 
-          // Connector color - green if previous phase ran, gray otherwise
-          const prevPhaseRan = index > 0 && hasPhaseRun(phases[index - 1]);
-          const connectorColor = prevPhaseRan && didRun
-            ? 'bg-green-500'
-            : isUnknown && index === knownPhases.length
-              ? 'bg-purple-400 dark:bg-purple-500' // First unknown phase connector
-              : 'bg-gray-300 dark:bg-gray-600';
+          // Connector color between this phase and the next
+          const nextPhase = index < phases.length - 1 ? phases[index + 1] : null;
+          const nextDidRun = nextPhase ? hasPhaseRun(nextPhase) : false;
+          const nextIsUnknown = nextPhase ? isUnknownPhase(nextPhase) : false;
+          const nextShowAsUnknown = nextIsUnknown && devMode;
+          const connectorColor = didRun && nextDidRun
+            ? (showAsUnknown || nextShowAsUnknown) ? 'bg-purple-400 dark:bg-purple-500' : 'bg-green-500'
+            : 'bg-gray-300 dark:bg-gray-600';
 
           return (
             <div key={phase} className="flex items-center">
-              {/* Separator before unknown phases */}
-              {isUnknown && index === knownPhases.length && (
-                <div className="flex items-center mr-1">
-                  <div className="w-px h-8 bg-purple-400 dark:bg-purple-500 mx-1" />
-                  <span className="text-[9px] text-purple-500 dark:text-purple-400 font-medium uppercase tracking-wider -rotate-90 -ml-2">
-                    New
-                  </span>
-                </div>
-              )}
               
               {/* Loop start indicator */}
               {isFirstLoop && didRun && maxPrecopyIterations > 1 && (
@@ -300,7 +369,7 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
                           ? 'bg-red-500 text-white'
                           : counts.warnings > 0
                             ? 'bg-orange-500 text-white'
-                            : isUnknown
+                            : showAsUnknown
                               ? 'bg-purple-500 text-white'
                               : status === 'loop'
                                 ? 'bg-cyan-500 text-white'
@@ -348,7 +417,7 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
                     ${hasLogs ? 'cursor-pointer hover:shadow-md' : 'cursor-default'}
                     ${isCurrent ? 'ring-2 ring-teal-400 ring-offset-1 dark:ring-offset-slate-800' : ''}
                   `}
-                  title={`${phase}${isUnknown ? ' (Unknown Phase)' : ''}${isLoopPhase && iterationCount > 1 ? ` (${iterationCount} iterations)` : ''}${duration ? ` (${duration} total)` : ''}${hasLogs ? ` - ${counts.total} logs` : ''}`}
+                  title={`${phase}${showAsUnknown ? ' (Unknown Phase)' : ''}${isLoopPhase && iterationCount > 1 ? ` (${iterationCount} iterations)` : ''}${duration ? ` (${duration} total)` : ''}${hasLogs ? ` - ${counts.total} logs` : ''}`}
                 >
                   <span className="block truncate text-center leading-tight">
                     {getShortPhaseName(phase)}
