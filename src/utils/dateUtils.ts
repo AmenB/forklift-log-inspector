@@ -3,13 +3,30 @@
  */
 
 /**
+ * Check if a date is a valid, meaningful date (not epoch 1970, not invalid)
+ */
+export function isValidDate(date: Date | string | undefined | null): boolean {
+  if (!date) return false;
+  try {
+    const d = date instanceof Date ? date : new Date(date);
+    if (isNaN(d.getTime())) return false;
+    // Treat epoch (1970-01-01) as invalid/unknown
+    if (d.getFullYear() <= 1970) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Format a date string to a human-readable datetime format
- * Output: "YYYY-MM-DD HH:mm:ss.mmm"
+ * Output: "YYYY-MM-DD HH:mm:ss.mmm" or empty string for unknown dates
  */
 export function formatDateTime(dateStr: string): string {
   try {
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return dateStr;
+    if (date.getFullYear() <= 1970) return '';
     
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -27,17 +44,27 @@ export function formatDateTime(dateStr: string): string {
 
 /**
  * Format a timestamp (Date or string) to ISO-like format without timezone
- * Output: "YYYY-MM-DD HH:mm:ss.mmm"
+ * Output: "YYYY-MM-DD HH:mm:ss.mmm" or 'Unknown' for invalid/epoch dates
  */
 export function formatTimestamp(date: Date | string | undefined): string {
-  if (!date) return 'Unknown time';
+  if (!date) return 'Unknown';
   try {
     const d = new Date(date);
-    if (isNaN(d.getTime())) return typeof date === 'string' ? date : 'Unknown time';
+    if (isNaN(d.getTime())) return typeof date === 'string' ? date : 'Unknown';
+    if (d.getFullYear() <= 1970) return 'Unknown';
     return d.toISOString().replace('T', ' ').replace('Z', '');
   } catch {
-    return typeof date === 'string' ? date : 'Unknown time';
+    return typeof date === 'string' ? date : 'Unknown';
   }
+}
+
+/**
+ * Format a Date for display, returning empty string for unknown/epoch dates
+ */
+export function formatDateLocale(date: Date | undefined | null): string {
+  if (!date) return '';
+  if (!isValidDate(date)) return '';
+  return date.toLocaleString();
 }
 
 /**

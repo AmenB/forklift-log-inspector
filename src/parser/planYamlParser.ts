@@ -1,5 +1,5 @@
 import yaml from 'js-yaml';
-import type { Plan, VM, PhaseInfo, Condition, ParsedData, ParseStats, Summary, PhaseLogSummary, RawLogEntry, MigrationType, WarmInfo, PrecopyInfo } from '../types';
+import type { Plan, VM, VMError, PhaseInfo, Condition, ParsedData, ParseStats, Summary, PhaseLogSummary, RawLogEntry, MigrationType, WarmInfo, PrecopyInfo } from '../types';
 import { PlanStatuses, MigrationTypes, PipelineSteps, phaseToStep } from './constants';
 import { formatDuration, groupLogs } from './utils';
 
@@ -50,6 +50,10 @@ interface YamlPipelineStep {
   progress?: { completed?: number; total?: number };
   annotations?: Record<string, string>;
   tasks?: YamlTask[];
+  error?: {
+    phase?: string;
+    reasons?: string[];
+  };
 }
 
 interface YamlTask {
@@ -90,6 +94,10 @@ interface YamlVMStatus {
     failures?: number;
     consecutiveFailures?: number;
     nextPrecopyAt?: string;
+  };
+  error?: {
+    phase?: string;
+    reasons?: string[];
   };
   luks?: Record<string, unknown>;
 }
@@ -267,32 +275,41 @@ function convertVMStatus(yamlVM: YamlVMStatus, planMigrationType: MigrationType)
 
   for (const step of yamlVM.pipeline || []) {
     const stepName = stepNameMap[step.name || ''] || step.name || '';
-    const started = step.started ? new Date(step.started) : new Date(0);
-    const completed = step.completed ? new Date(step.completed) : undefined;
-    const durationMs = started && completed ? completed.getTime() - started.getTime() : undefined;
     const phaseName = step.name || 'Unknown';
     const isDiskTransfer = phaseName === 'DiskTransfer';
+    const stepPhase = step.phase || '';
+    const isPending = stepPhase === 'Pending' || (!step.started && !step.completed && !step.error);
 
-    phaseHistory.push({
-      name: phaseName,
-      step: stepName,
-      startedAt: started,
-      endedAt: completed,
-    });
+    // Only add to phaseHistory if the step actually ran (not Pending)
+    const started = step.started ? new Date(step.started) : undefined;
+    const completed = step.completed ? new Date(step.completed) : undefined;
+    const durationMs = started && completed ? completed.getTime() - started.getTime() : undefined;
 
-    // Build logs for this step
+    if (!isPending) {
+      phaseHistory.push({
+        name: phaseName,
+        step: stepName,
+        startedAt: started || new Date(0),
+        endedAt: completed,
+      });
+    }
+
+    // Build logs for this step (skip pending steps with no useful info)
+    if (isPending) continue;
+
     const logs: RawLogEntry[] = [];
+    const logTimestamp = started || new Date(0);
 
     // Step info log
     logs.push({
-      timestamp: started.toISOString(),
+      timestamp: logTimestamp.toISOString(),
       level: 'info',
-      message: `${step.description || phaseName} - Phase: ${step.phase || 'Unknown'}`,
+      message: `${step.description || phaseName} - Phase: ${stepPhase || 'Unknown'}`,
       phase: phaseName,
       rawLine: JSON.stringify({
         step: phaseName,
         description: step.description,
-        phase: step.phase,
+        phase: stepPhase,
         progress: step.progress,
         started: step.started,
         completed: step.completed,
@@ -306,7 +323,7 @@ function convertVMStatus(yamlVM: YamlVMStatus, planMigrationType: MigrationType)
         ? `${step.progress.completed || 0}/${step.progress.total || 0} ${unit}`
         : `${step.progress.completed || 0}/${step.progress.total || 0}`;
       logs.push({
-        timestamp: (completed || started).toISOString(),
+        timestamp: (completed || logTimestamp).toISOString(),
         level: 'info',
         message: `Progress: ${progressStr}`,
         phase: phaseName,
@@ -317,12 +334,28 @@ function convertVMStatus(yamlVM: YamlVMStatus, planMigrationType: MigrationType)
     // Task info
     for (const task of step.tasks || []) {
       logs.push({
-        timestamp: (task.started ? new Date(task.started) : started).toISOString(),
+        timestamp: (task.started ? new Date(task.started) : logTimestamp).toISOString(),
         level: 'info',
         message: `Task: ${task.name || 'unknown'}${task.reason ? ` - ${task.reason}` : ''}${task.annotations?.Precopy ? ` (Precopy #${task.annotations.Precopy})` : ''}`,
         phase: phaseName,
         rawLine: JSON.stringify(task, null, 2),
       });
+    }
+
+    // Step error
+    if (step.error) {
+      for (const reason of step.error.reasons || []) {
+        logs.push({
+          timestamp: (completed || logTimestamp).toISOString(),
+          level: 'error',
+          message: `${phaseName} failed: ${reason}`,
+          phase: phaseName,
+          rawLine: JSON.stringify({
+            step: phaseName,
+            error: step.error,
+          }, null, 2),
+        });
+      }
     }
 
     // For DiskTransfer in warm migrations, add precopy details
@@ -334,7 +367,7 @@ function convertVMStatus(yamlVM: YamlVMStatus, planMigrationType: MigrationType)
 
     phaseLogSummaries[phaseName] = {
       phase: phaseName,
-      startTime: started.toISOString(),
+      startTime: started?.toISOString(),
       endTime: completed?.toISOString(),
       duration: durationMs ? formatDuration(durationMs) : undefined,
       durationMs,
@@ -348,6 +381,24 @@ function convertVMStatus(yamlVM: YamlVMStatus, planMigrationType: MigrationType)
       ] : undefined,
     };
   }
+
+  // Extract VM-level error
+  let vmError: VMError | undefined;
+  if (yamlVM.error) {
+    vmError = {
+      phase: yamlVM.error.phase || '',
+      reasons: yamlVM.error.reasons || [],
+    };
+  }
+
+  // Extract VM-level conditions
+  const vmConditions: Condition[] = (yamlVM.conditions || []).map(c => ({
+    type: c.type || '',
+    status: c.status || '',
+    category: c.category,
+    message: c.message || '',
+    timestamp: new Date(c.lastTransitionTime || 0),
+  }));
 
   const currentPhase = yamlVM.phase || (phaseHistory.length > 0 ? phaseHistory[phaseHistory.length - 1].name : '');
   const currentStep = currentPhase ? phaseToStep(currentPhase, isWarm) : '';
@@ -396,6 +447,8 @@ function convertVMStatus(yamlVM: YamlVMStatus, planMigrationType: MigrationType)
     fromYaml: true,
     precopyCount: precopyCount > 0 ? precopyCount : undefined,
     warmInfo,
+    error: vmError,
+    conditions: vmConditions.length > 0 ? vmConditions : undefined,
   };
 }
 

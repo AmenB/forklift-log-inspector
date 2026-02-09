@@ -2,21 +2,21 @@ import { useMemo } from 'react';
 import type { VM, PhaseLogSummary, PhaseInfo } from '../types';
 import { getPhasesForMigrationType, PrecopyLoopPhasesSet, PrecopyLoopPhases } from '../parser/constants';
 import { formatDuration } from '../parser/utils';
-
-// Secret dev mode: add ?dev=true to the URL to highlight unknown phases in purple
-const isDevMode = () => new URLSearchParams(window.location.search).has('dev');
+import { useDevMode } from '../store/useStore';
 
 interface PhasePipelineProps {
   vm: VM;
   phaseSummaries: Record<string, PhaseLogSummary>;
   onPhaseClick: (phase: string) => void;
+  onCycleViewClick?: () => void;
 }
 
 // Min and max widths for phase boxes (in pixels)
 const MIN_WIDTH = 65;
 const MAX_WIDTH = 160;
 
-export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelineProps) {
+export function PhasePipeline({ vm, phaseSummaries, onPhaseClick, onCycleViewClick }: PhasePipelineProps) {
+  const devMode = useDevMode();
   const knownPhases = vm.fromYaml ? [] : getPhasesForMigrationType(vm.migrationType);
   const knownPhasesSet = new Set(knownPhases);
   
@@ -325,12 +325,20 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
       {/* Show precopy loop indicator if there are multiple iterations */}
       {maxPrecopyIterations > 1 && (
         <div className="mb-2 flex items-center gap-2">
-          <span className="text-xs font-medium text-cyan-600 dark:text-cyan-400 bg-cyan-100 dark:bg-cyan-900/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+          <button
+            onClick={onCycleViewClick}
+            className="text-xs font-medium text-cyan-600 dark:text-cyan-400 bg-cyan-100 dark:bg-cyan-900/40 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-cyan-200 dark:hover:bg-cyan-900/60 transition-colors cursor-pointer"
+            title="View logs grouped by cycle"
+          >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
             Precopy Loop: {maxPrecopyIterations} iterations
-          </span>
+            <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          </button>
         </div>
       )}
       <div className="flex flex-wrap items-start gap-y-4 gap-x-0.5">
@@ -342,7 +350,6 @@ export function PhasePipeline({ vm, phaseSummaries, onPhaseClick }: PhasePipelin
           const didRun = hasPhaseRun(phase);
           const phaseWidth = didRun ? getPhaseWidth(phase) : MIN_WIDTH;
           const isUnknown = isUnknownPhase(phase);
-          const devMode = isDevMode();
           const showAsUnknown = isUnknown && devMode; // Only highlight as unknown in dev mode
           const isLoopPhase = isPrecopyLoopPhase(phase);
           const iterationCount = getPhaseIterationCount(phase);

@@ -189,9 +189,9 @@ export function PhaseLogsModal({ phase, vmName, logs, summary, iterations, warmI
       maxWidth="5xl"
     >
       {/* Timing info */}
-        {(summary?.startTime || summary?.endTime || summary?.duration) && (
+        {((summary?.startTime && formatDateTime(summary.startTime)) || (summary?.endTime && formatDateTime(summary.endTime)) || summary?.duration) && (
           <div className="px-6 py-3 border-b border-slate-200 dark:border-slate-700 flex flex-wrap gap-x-6 gap-y-1 text-sm">
-            {summary?.startTime && (
+            {summary?.startTime && formatDateTime(summary.startTime) && (
               <div>
                 <span className="font-medium text-slate-700 dark:text-gray-300">Started:</span>
                 <span className="ml-2 text-slate-600 dark:text-gray-400">
@@ -199,7 +199,7 @@ export function PhaseLogsModal({ phase, vmName, logs, summary, iterations, warmI
                 </span>
               </div>
             )}
-            {summary?.endTime && (
+            {summary?.endTime && formatDateTime(summary.endTime) && (
               <div>
                 <span className="font-medium text-slate-700 dark:text-gray-300">Ended:</span>
                 <span className="ml-2 text-slate-600 dark:text-gray-400">

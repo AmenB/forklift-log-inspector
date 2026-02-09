@@ -12,6 +12,7 @@ interface AppState {
   // UI state
   theme: 'dark' | 'light';
   themeInitialized: boolean;
+  devMode: boolean;
   searchQuery: string;
   statusFilter: string;
   expandedPlans: string[];
@@ -24,6 +25,7 @@ interface AppState {
   toggleTheme: () => void;
   setTheme: (theme: 'dark' | 'light') => void;
   initializeTheme: () => void;
+  toggleDevMode: () => void;
   setSearchQuery: (query: string) => void;
   setStatusFilter: (filter: string) => void;
   togglePlanExpanded: (planKey: string) => void;
@@ -74,6 +76,7 @@ export const useStore = create<AppState>()(
       // Initial UI state
       theme: 'dark',
       themeInitialized: false,
+      devMode: false,
       searchQuery: '',
       statusFilter: 'all',
       expandedPlans: [],
@@ -119,6 +122,10 @@ export const useStore = create<AppState>()(
           const systemTheme = getSystemTheme();
           set({ theme: systemTheme, themeInitialized: true });
         }
+      },
+      
+      toggleDevMode: () => {
+        set((state) => ({ devMode: !state.devMode }));
       },
       
       setSearchQuery: (query: string) => {
@@ -187,6 +194,7 @@ export const useStore = create<AppState>()(
       partialize: (state) => ({
         theme: state.theme,
         themeInitialized: state.themeInitialized,
+        devMode: state.devMode,
       }),
     }
   )
@@ -202,3 +210,4 @@ export const useSearchQuery = () => useStore((state) => state.searchQuery);
 export const useStatusFilter = () => useStore((state) => state.statusFilter);
 export const useSelectedPlanIndex = () => useStore((state) => state.selectedPlanIndex);
 export const useShowKeyboardHelp = () => useStore((state) => state.showKeyboardHelp);
+export const useDevMode = () => useStore((state) => state.devMode);

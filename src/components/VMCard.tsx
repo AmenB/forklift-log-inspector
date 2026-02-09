@@ -2,8 +2,10 @@ import { useState, useMemo } from 'react';
 import type { VM, RawLogEntry, PhaseIteration } from '../types';
 import { PhasePipeline } from './PhasePipeline';
 import { PhaseLogsModal } from './PhaseLogsModal';
+import { CycleLogsModal } from './CycleLogsModal';
 import { VMRawLogsModal } from './VMRawLogsModal';
 import { formatDuration, computePhaseLogSummaries } from '../parser/utils';
+import { formatDateLocale } from '../utils/dateUtils';
 import { getResourceColorClass } from '../utils/badgeUtils';
 import { PrecopyLoopPhasesSet } from '../parser/constants';
 
@@ -13,6 +15,7 @@ interface VMCardProps {
 
 export function VMCard({ vm }: VMCardProps) {
   const [selectedPhase, setSelectedPhase] = useState<string | null>(null);
+  const [showCycleLogs, setShowCycleLogs] = useState(false);
   const [showRawLogs, setShowRawLogs] = useState(false);
 
   // Calculate VM duration from first to last seen
@@ -110,18 +113,50 @@ export function VMCard({ vm }: VMCardProps) {
           vm={vm}
           phaseSummaries={phaseSummaries}
           onPhaseClick={setSelectedPhase}
+          onCycleViewClick={() => setShowCycleLogs(true)}
         />
+
+        {/* VM Error Banner */}
+        {vm.error && (
+          <div className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+            <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-red-800 dark:text-red-300">
+                Failed at phase: {vm.error.phase}
+              </p>
+              {vm.error.reasons.map((reason, idx) => (
+                <p key={idx} className="text-xs text-red-600 dark:text-red-400 mt-0.5 break-words">
+                  {reason}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* VM Failed Condition (when no error details) */}
+        {!vm.error && vm.conditions?.some(c => c.type === 'Failed' && c.status === 'True') && (
+          <div className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+            <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-sm font-medium text-red-800 dark:text-red-300">
+              {vm.conditions.find(c => c.type === 'Failed')?.message || 'The VM migration has failed.'}
+            </p>
+          </div>
+        )}
 
         {/* VM Details */}
         <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
-          {vm.firstSeen && (
+          {formatDateLocale(vm.firstSeen) && (
             <div className="text-slate-500 dark:text-gray-400">
-              <span className="font-medium">First seen:</span> {vm.firstSeen.toLocaleString()}
+              <span className="font-medium">First seen:</span> {formatDateLocale(vm.firstSeen)}
             </div>
           )}
-          {vm.lastSeen && (
+          {formatDateLocale(vm.lastSeen) && (
             <div className="text-slate-500 dark:text-gray-400">
-              <span className="font-medium">Last seen:</span> {vm.lastSeen.toLocaleString()}
+              <span className="font-medium">Last seen:</span> {formatDateLocale(vm.lastSeen)}
             </div>
           )}
           {duration && (
@@ -184,6 +219,14 @@ export function VMCard({ vm }: VMCardProps) {
           iterations={selectedPhaseIterations}
           warmInfo={selectedPhase === 'DiskTransfer' ? vm.warmInfo : undefined}
           onClose={() => setSelectedPhase(null)}
+        />
+      )}
+
+      {/* Cycle Logs Modal */}
+      {showCycleLogs && (
+        <CycleLogsModal
+          vm={vm}
+          onClose={() => setShowCycleLogs(false)}
         />
       )}
 

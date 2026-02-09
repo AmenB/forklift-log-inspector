@@ -39,12 +39,20 @@ function KeyboardShortcutsHelp() {
 }
 
 function AppContent() {
-  const { theme, plans, initializeTheme, toggleTheme, navigatePlan, toggleSelectedPlanExpanded, setShowKeyboardHelp, setSearchQuery } = useStore();
+  const { theme, plans, devMode, initializeTheme, toggleTheme, toggleDevMode, navigatePlan, toggleSelectedPlanExpanded, setShowKeyboardHelp, setSearchQuery } = useStore();
 
   // Initialize theme from system preference on first load
   useEffect(() => {
     initializeTheme();
   }, [initializeTheme]);
+
+  // Enable dev mode from URL param (?dev=true) if not already on
+  useEffect(() => {
+    if (!devMode && new URLSearchParams(window.location.search).has('dev')) {
+      toggleDevMode();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Listen for system theme changes
   useEffect(() => {
@@ -99,6 +107,7 @@ function AppContent() {
     { key: 'k', action: () => navigatePlan('up'), description: 'Navigate up' },
     { key: 'Enter', action: toggleSelectedPlanExpanded, description: 'Toggle expand' },
     { key: 'd', ctrl: true, action: toggleTheme, description: 'Toggle theme' },
+    { key: 'd', ctrl: true, shift: true, action: toggleDevMode, description: 'Toggle dev mode' },
     { key: '?', shift: true, action: () => setShowKeyboardHelp(true), description: 'Show help' },
   ]);
 

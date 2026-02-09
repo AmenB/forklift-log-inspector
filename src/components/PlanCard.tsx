@@ -4,6 +4,7 @@ import { useStore, useSearchQuery } from '../store/useStore';
 import { VMCard } from './VMCard';
 import { ErrorSection } from './ErrorSection';
 import { getStatusBadgeClass } from '../utils/badgeUtils';
+import { formatDateLocale } from '../utils/dateUtils';
 import { SearchHighlight } from './common';
 
 interface PlanCardProps {
@@ -95,11 +96,11 @@ export function PlanCard({ plan }: PlanCardProps) {
             </div>
             <div>
               <span className="text-slate-500 dark:text-gray-400">First Seen:</span>
-              <span className="ml-2 text-slate-900 dark:text-gray-100">{plan.firstSeen.toLocaleString()}</span>
+              <span className="ml-2 text-slate-900 dark:text-gray-100">{formatDateLocale(plan.firstSeen) || 'Unknown'}</span>
             </div>
             <div>
               <span className="text-slate-500 dark:text-gray-400">Last Seen:</span>
-              <span className="ml-2 text-slate-900 dark:text-gray-100">{plan.lastSeen.toLocaleString()}</span>
+              <span className="ml-2 text-slate-900 dark:text-gray-100">{formatDateLocale(plan.lastSeen) || 'Unknown'}</span>
             </div>
             <div>
               <span className="text-slate-500 dark:text-gray-400">Conditions:</span>
@@ -112,21 +113,29 @@ export function PlanCard({ plan }: PlanCardProps) {
             <div className="space-y-2">
               <h4 className="text-sm font-medium text-slate-500 dark:text-gray-400">Conditions</h4>
               <div className="flex flex-wrap gap-2">
-                {plan.conditions.map((cond, idx) => (
-                  <div
-                    key={idx}
-                    className={`
-                      px-3 py-1.5 rounded-lg text-xs
-                      ${cond.status === 'True'
-                        ? 'bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400'
-                        : 'bg-slate-100 dark:bg-gray-500/20 text-slate-600 dark:text-gray-400'
-                      }
-                    `}
-                    title={cond.message}
-                  >
-                    {cond.type}: {cond.status}
-                  </div>
-                ))}
+                {plan.conditions.map((cond, idx) => {
+                  let colorClass = 'bg-slate-100 dark:bg-gray-500/20 text-slate-600 dark:text-gray-400';
+                  if (cond.status === 'True') {
+                    if (cond.type === 'Failed') {
+                      colorClass = 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400';
+                    } else if (cond.type === 'Canceled') {
+                      // keep default gray
+                    } else if (cond.type === 'Ready' || cond.type === 'Succeeded' || cond.type === 'Executing') {
+                      colorClass = 'bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400';
+                    } else {
+                      colorClass = 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400';
+                    }
+                  }
+                  return (
+                    <div
+                      key={idx}
+                      className={`px-3 py-1.5 rounded-lg text-xs ${colorClass}`}
+                      title={cond.message}
+                    >
+                      {cond.type}: {cond.status}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -90,6 +90,11 @@ export interface WarmInfo {
   nextPrecopyAt?: string;
 }
 
+export interface VMError {
+  phase: string;
+  reasons: string[];
+}
+
 export interface VM {
   id: string;
   name: string;
@@ -106,6 +111,27 @@ export interface VM {
   fromYaml?: boolean; // True when parsed from Plan YAML (only show actual pipeline steps)
   precopyCount?: number; // Number of precopy iterations (warm migration from YAML)
   warmInfo?: WarmInfo; // Structured warm migration precopy data
+  error?: VMError; // VM-level error (from YAML status)
+  conditions?: Condition[]; // VM-level conditions (from YAML status)
+}
+
+// Cycle view: logs from all phases grouped by cycle/iteration
+export interface CyclePhaseData {
+  phase: string;
+  logs: RawLogEntry[];
+  groupedLogs: GroupedLogEntry[];
+  startedAt?: Date;
+  endedAt?: Date;
+  durationMs?: number;
+}
+
+export interface CycleData {
+  iteration: number;
+  startedAt?: Date;
+  endedAt?: Date;
+  durationMs?: number;
+  phases: CyclePhaseData[];
+  totalLogs: number;
 }
 
 export interface ErrorEntry {
