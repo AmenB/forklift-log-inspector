@@ -239,6 +239,16 @@ export interface ScheduleSnapshot {
   nextVM?: { id?: string; name?: string };
 }
 
+// Result of processing an archive (tar/tar.gz)
+export interface ArchiveResult {
+  /** Paths of files identified as forklift-controller logs */
+  logFiles: string[];
+  /** Paths of files identified as Plan YAML resources */
+  yamlFiles: string[];
+  /** The merged ParsedData ready for the store */
+  parsedData: ParsedData;
+}
+
 // Log entry as parsed from JSON
 export interface LogEntry {
   level: string;

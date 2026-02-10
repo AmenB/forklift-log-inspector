@@ -2,6 +2,35 @@ import { useState, useCallback, useRef, DragEvent, ChangeEvent } from 'react';
 import { useStore } from '../store/useStore';
 import { useToast } from './Toast';
 import { parseLogFile, parsePlanYaml, isYamlContent } from '../parser';
+import { processArchive } from '../parser/archiveProcessor';
+
+/** Extensions for plain text files handled directly */
+const PLAIN_EXTENSIONS = ['.log', '.txt', '.json', '.yaml', '.yml'];
+
+/** Extensions that indicate a tar archive */
+const ARCHIVE_EXTENSIONS = ['.tar', '.tgz'];
+
+/**
+ * Detect whether a filename refers to a tar archive.
+ * Handles compound extensions like `.tar.gz`.
+ */
+function isArchiveFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.tar.gz')) return true;
+  for (const ext of ARCHIVE_EXTENSIONS) {
+    if (lower.endsWith(ext)) return true;
+  }
+  return false;
+}
+
+/**
+ * Check if a filename has a valid (plain or archive) extension.
+ */
+function isValidFile(name: string): boolean {
+  if (isArchiveFile(name)) return true;
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+  return PLAIN_EXTENSIONS.includes(ext);
+}
 
 export function UploadZone() {
   const [isDragging, setIsDragging] = useState(false);
@@ -12,11 +41,11 @@ export function UploadZone() {
   const { showToast } = useToast();
 
   const handleFile = useCallback(async (file: File) => {
-    // Validate file type
-    const validExtensions = ['.log', '.txt', '.json', '.yaml', '.yml'];
-    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
-    if (!validExtensions.includes(ext)) {
-      showToast(`Invalid file type. Allowed: ${validExtensions.join(', ')}`, 'error');
+    if (!isValidFile(file.name)) {
+      showToast(
+        `Invalid file type. Allowed: ${[...PLAIN_EXTENSIONS, '.tar', '.tar.gz', '.tgz'].join(', ')}`,
+        'error',
+      );
       return;
     }
 
@@ -27,18 +56,51 @@ export function UploadZone() {
         clearData();
       }
 
+      // ── Archive path ──────────────────────────────────────────────
+      if (isArchiveFile(file.name)) {
+        const archiveResult = await processArchive(file);
+
+        if (archiveResult.logFiles.length === 0 && archiveResult.yamlFiles.length === 0) {
+          showToast(
+            'No forklift controller logs or Plan YAMLs found in archive',
+            'error',
+          );
+          return;
+        }
+
+        setParseResult(archiveResult.parsedData);
+
+        const parts: string[] = [];
+        if (archiveResult.logFiles.length > 0) {
+          parts.push(
+            `${archiveResult.logFiles.length} log file${archiveResult.logFiles.length !== 1 ? 's' : ''}`,
+          );
+        }
+        if (archiveResult.yamlFiles.length > 0) {
+          parts.push(
+            `${archiveResult.yamlFiles.length} Plan YAML${archiveResult.yamlFiles.length !== 1 ? 's' : ''}`,
+          );
+        }
+        showToast(
+          `Archive processed: found ${parts.join(' and ')} (${archiveResult.parsedData.stats.plansFound} plan${archiveResult.parsedData.stats.plansFound !== 1 ? 's' : ''}, ${archiveResult.parsedData.stats.vmsFound} VM${archiveResult.parsedData.stats.vmsFound !== 1 ? 's' : ''})`,
+          'success',
+        );
+        return;
+      }
+
+      // ── Plain file path ───────────────────────────────────────────
+      const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
       const content = await file.text();
       const isYaml = ext === '.yaml' || ext === '.yml' || isYamlContent(content);
 
       const result = isYaml ? parsePlanYaml(content) : parseLogFile(content);
       setParseResult(result);
 
-      const fileType = isYaml ? 'Plan YAML' : 'log';
       showToast(
         isYaml
-          ? `Parsed ${fileType}: found ${result.stats.plansFound} plan${result.stats.plansFound !== 1 ? 's' : ''}, ${result.stats.vmsFound} VM${result.stats.vmsFound !== 1 ? 's' : ''}`
+          ? `Parsed Plan YAML: found ${result.stats.plansFound} plan${result.stats.plansFound !== 1 ? 's' : ''}, ${result.stats.vmsFound} VM${result.stats.vmsFound !== 1 ? 's' : ''}`
           : `Parsed ${result.stats.parsedLines.toLocaleString()} lines, found ${result.stats.plansFound} plans`,
-        'success'
+        'success',
       );
     } catch (error) {
       console.error('Error parsing file:', error);
@@ -104,7 +166,7 @@ export function UploadZone() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".log,.txt,.json,.yaml,.yml"
+          accept=".log,.txt,.json,.yaml,.yml,.tar,.tar.gz,.tgz"
           onChange={handleFileInputChange}
           className="hidden"
         />
@@ -130,10 +192,10 @@ export function UploadZone() {
               />
             </svg>
             <p className="text-slate-900 dark:text-gray-100 font-medium mb-1">
-              Drop your log file or Plan YAML here, or click to browse
+              Drop your log file, Plan YAML, or archive here, or click to browse
             </p>
             <p className="text-slate-500 dark:text-gray-400 text-sm">
-              Supports .log, .txt, .json, .yaml, .yml files
+              Supports .log, .txt, .json, .yaml, .yml, .tar, .tar.gz, .tgz files
             </p>
           </>
         )}
