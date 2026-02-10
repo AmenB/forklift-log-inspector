@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { Plan } from '../types';
-import { useStore, useSearchQuery } from '../store/useStore';
+import { useStore, useSearchQuery, useDevMode } from '../store/useStore';
 import { VMCard } from './VMCard';
 import { ErrorSection } from './ErrorSection';
 import { SchedulerView } from './SchedulerView';
@@ -12,15 +12,37 @@ interface PlanCardProps {
   plan: Plan;
 }
 
+/**
+ * Determine the data source label for a plan:
+ *  - "Logs"       — only log-pipeline data
+ *  - "YAML"       — only YAML-pipeline data
+ *  - "YAML + Logs" — both pipelines contributed
+ */
+function getDataSourceLabel(plan: Plan): string {
+  const vmList = Object.values(plan.vms);
+  const hasYaml = !!plan.spec || vmList.some(vm => vm.fromYaml === true);
+  const hasLogs =
+    vmList.some(vm => !vm.fromYaml) ||
+    !!plan.migration ||
+    plan.panics.length > 0 ||
+    (plan.scheduleHistory && plan.scheduleHistory.length > 0);
+
+  if (hasYaml && hasLogs) return 'YAML + Logs';
+  if (hasYaml) return 'YAML';
+  return 'Logs';
+}
+
 export function PlanCard({ plan }: PlanCardProps) {
   const { togglePlanExpanded, isPlanExpanded } = useStore();
   const searchQuery = useSearchQuery();
+  const devMode = useDevMode();
   const planKey = `${plan.namespace}/${plan.name}`;
   const isExpanded = isPlanExpanded(planKey);
 
   const vms = useMemo(() => Object.values(plan.vms), [plan.vms]);
 
   const statusBadgeClass = getStatusBadgeClass(plan.status);
+  const dataSource = devMode ? getDataSourceLabel(plan) : '';
 
   const hasPanics = plan.panics.length > 0;
   const hasErrors = plan.errors.some((e) => e.level === 'error');
@@ -68,6 +90,18 @@ export function PlanCard({ plan }: PlanCardProps) {
           {plan.migrationType !== 'Unknown' && (
             <span className="px-2 py-1 rounded text-xs bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400">
               {plan.migrationType}
+            </span>
+          )}
+
+          {devMode && dataSource && (
+            <span className={`px-2 py-1 rounded text-xs ${
+              dataSource === 'YAML + Logs'
+                ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
+                : dataSource === 'Logs'
+                  ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400'
+                  : 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400'
+            }`}>
+              {dataSource}
             </span>
           )}
 

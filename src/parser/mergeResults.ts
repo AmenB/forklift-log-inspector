@@ -1,10 +1,14 @@
 /**
- * Merge ParsedData from the log pipeline and the Plan YAML pipeline.
+ * Merge two ParsedData results into one.
  *
- * Strategy:
- *  - Logs only  → return as-is
- *  - YAML only  → return as-is
- *  - Both       → logs are primary; YAML enriches with spec, VM metadata, etc.
+ * Used for:
+ *  - Combining log pipeline + YAML pipeline results
+ *  - Accumulating results from multiple files / archives
+ *
+ * Strategy for duplicate plans (same namespace/name):
+ *  - The plan with real log data (VMs not from YAML) is used as the base
+ *  - The other plan enriches it with spec, VM metadata, status, etc.
+ *  - If neither or both have log data, the first argument wins as base
  */
 
 import type { ParsedData, Plan, VM, Summary } from '../types';
@@ -12,67 +16,61 @@ import type { ParsedData, Plan, VM, Summary } from '../types';
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Merge results from both pipelines into a single ParsedData.
+ * Merge two ParsedData into a single combined result.
  * Either (or both) inputs may be null.
  */
 export function mergeResults(
-  logResult: ParsedData | null,
-  yamlResult: ParsedData | null,
+  a: ParsedData | null,
+  b: ParsedData | null,
 ): ParsedData {
-  // Only one source present → return it directly
-  if (!logResult && !yamlResult) {
-    return emptyResult();
-  }
-  if (!logResult) return yamlResult!;
-  if (!yamlResult) return logResult;
-
-  // Both present → merge
-  return mergeBoth(logResult, yamlResult);
+  if (!a && !b) return emptyResult();
+  if (!a) return b!;
+  if (!b) return a;
+  return mergeBoth(a, b);
 }
 
 // ── Merge logic ────────────────────────────────────────────────────────────
 
-function mergeBoth(logData: ParsedData, yamlData: ParsedData): ParsedData {
-  // Index YAML plans by key (namespace/name)
-  const yamlPlanMap = new Map<string, Plan>();
-  for (const plan of yamlData.plans) {
-    yamlPlanMap.set(planKey(plan), plan);
+function mergeBoth(dataA: ParsedData, dataB: ParsedData): ParsedData {
+  // Index plans from B by key
+  const bPlanMap = new Map<string, Plan>();
+  for (const plan of dataB.plans) {
+    bPlanMap.set(planKey(plan), plan);
   }
 
-  // Enrich log plans with YAML data
   const mergedPlans: Plan[] = [];
-  const matchedYamlKeys = new Set<string>();
+  const matchedKeys = new Set<string>();
 
-  for (const logPlan of logData.plans) {
-    const key = planKey(logPlan);
-    const yamlPlan = yamlPlanMap.get(key);
+  // Walk plans from A, merge with B if matched
+  for (const planA of dataA.plans) {
+    const key = planKey(planA);
+    const planB = bPlanMap.get(key);
 
-    if (yamlPlan) {
-      matchedYamlKeys.add(key);
-      mergedPlans.push(enrichPlan(logPlan, yamlPlan));
+    if (planB) {
+      matchedKeys.add(key);
+      mergedPlans.push(mergePlans(planA, planB));
     } else {
-      mergedPlans.push(logPlan);
+      mergedPlans.push(planA);
     }
   }
 
-  // Add YAML-only plans (not present in logs)
-  for (const yamlPlan of yamlData.plans) {
-    if (!matchedYamlKeys.has(planKey(yamlPlan))) {
-      mergedPlans.push(yamlPlan);
+  // Add plans only in B
+  for (const planB of dataB.plans) {
+    if (!matchedKeys.has(planKey(planB))) {
+      mergedPlans.push(planB);
     }
   }
 
-  // Combine events
-  const events = [...logData.events, ...yamlData.events];
-  // Sort by timestamp
+  // Combine events and sort
+  const events = [...dataA.events, ...dataB.events];
   events.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
   // Recompute stats
   const stats = {
-    totalLines: logData.stats.totalLines + yamlData.stats.totalLines,
-    parsedLines: logData.stats.parsedLines + yamlData.stats.parsedLines,
-    errorLines: logData.stats.errorLines + yamlData.stats.errorLines,
-    duplicateLines: logData.stats.duplicateLines + yamlData.stats.duplicateLines,
+    totalLines: dataA.stats.totalLines + dataB.stats.totalLines,
+    parsedLines: dataA.stats.parsedLines + dataB.stats.parsedLines,
+    errorLines: dataA.stats.errorLines + dataB.stats.errorLines,
+    duplicateLines: dataA.stats.duplicateLines + dataB.stats.duplicateLines,
     plansFound: mergedPlans.length,
     vmsFound: mergedPlans.reduce(
       (sum, p) => sum + Object.keys(p.vms).length,
@@ -80,74 +78,113 @@ function mergeBoth(logData: ParsedData, yamlData: ParsedData): ParsedData {
     ),
   };
 
-  // Recompute summary from the merged plan list
   const summary = computeSummary(mergedPlans);
 
   return { plans: mergedPlans, events, stats, summary };
 }
 
-// ── Plan enrichment ────────────────────────────────────────────────────────
+// ── Plan merging ───────────────────────────────────────────────────────────
 
 /**
- * Enrich a log-derived plan with data only available in the YAML pipeline.
- * The log plan is used as the base (it has richer event/phase-log data).
+ * Check whether a plan has real log-pipeline data (VMs not from YAML).
  */
-function enrichPlan(logPlan: Plan, yamlPlan: Plan): Plan {
-  const enriched: Plan = { ...logPlan };
-
-  // YAML spec (never present in log-derived plans)
-  if (yamlPlan.spec) {
-    enriched.spec = yamlPlan.spec;
-  }
-
-  // If the log-derived status is inconclusive but YAML has a definitive status, use the YAML status
-  if (
-    (enriched.status === 'Pending' || enriched.status === 'Ready') &&
-    yamlPlan.status !== 'Pending' &&
-    yamlPlan.status !== 'Ready'
-  ) {
-    enriched.status = yamlPlan.status;
-  }
-
-  // Enrich VMs
-  for (const [vmId, yamlVM] of Object.entries(yamlPlan.vms)) {
-    const logVM = enriched.vms[vmId];
-    if (logVM) {
-      enrichVM(logVM, yamlVM);
-    } else {
-      // VM only exists in YAML → add it
-      enriched.vms[vmId] = yamlVM;
-    }
-  }
-
-  return enriched;
+function hasLogData(plan: Plan): boolean {
+  return Object.values(plan.vms).some(vm => !vm.fromYaml);
 }
 
 /**
- * Enrich a log-derived VM with YAML-only metadata.
- * Mutates the logVM in place.
+ * Merge two plans with the same namespace/name.
+ *
+ * The plan with real log-pipeline data is used as the base (richer events,
+ * phase logs, raw entries). The other enriches it with spec, VM metadata,
+ * and a more accurate status if the base status is inconclusive.
+ *
+ * If both or neither have log data, the first argument is used as base.
  */
-function enrichVM(logVM: VM, yamlVM: VM): void {
-  // Fields that only come from YAML status
-  if (yamlVM.operatingSystem && !logVM.operatingSystem) {
-    logVM.operatingSystem = yamlVM.operatingSystem;
+function mergePlans(planA: Plan, planB: Plan): Plan {
+  // Pick the log-derived plan as base, YAML-derived as enrichment
+  const bHasLogs = hasLogData(planB);
+  const aHasLogs = hasLogData(planA);
+  const [base, other] = bHasLogs && !aHasLogs ? [planB, planA] : [planA, planB];
+
+  const merged: Plan = { ...base };
+
+  // Spec: take whichever has it
+  if (other.spec && !merged.spec) {
+    merged.spec = other.spec;
   }
-  if (yamlVM.restorePowerState && !logVM.restorePowerState) {
-    logVM.restorePowerState = yamlVM.restorePowerState;
+
+  // Archived: true if either says so
+  if (other.archived) {
+    merged.archived = true;
   }
-  if (yamlVM.newName && !logVM.newName) {
-    logVM.newName = yamlVM.newName;
+
+  // Status: if base is inconclusive, prefer other's definitive status
+  if (
+    (merged.status === 'Pending' || merged.status === 'Ready') &&
+    other.status !== 'Pending' &&
+    other.status !== 'Ready'
+  ) {
+    merged.status = other.status;
   }
-  if (yamlVM.error && !logVM.error) {
-    logVM.error = yamlVM.error;
+
+  // Conditions: merge, prefer base but add missing from other
+  if (other.conditions.length > 0) {
+    const existingTypes = new Set(merged.conditions.map(c => c.type));
+    for (const cond of other.conditions) {
+      if (!existingTypes.has(cond.type)) {
+        merged.conditions.push(cond);
+      }
+    }
   }
-  if (yamlVM.conditions && (!logVM.conditions || logVM.conditions.length === 0)) {
-    logVM.conditions = yamlVM.conditions;
+
+  // Errors: add unique errors from other
+  if (other.errors.length > 0 && merged.errors.length === 0) {
+    merged.errors = [...other.errors];
   }
-  // Warm info from YAML is more structured (has disk info, snapshots)
-  if (yamlVM.warmInfo && !logVM.warmInfo) {
-    logVM.warmInfo = yamlVM.warmInfo;
-    logVM.precopyCount = yamlVM.precopyCount;
+
+  // Panics: add from other if base has none
+  if (other.panics.length > 0 && merged.panics.length === 0) {
+    merged.panics = [...other.panics];
+  }
+
+  // VMs: merge each VM
+  for (const [vmId, otherVM] of Object.entries(other.vms)) {
+    const baseVM = merged.vms[vmId];
+    if (baseVM) {
+      enrichVM(baseVM, otherVM);
+    } else {
+      merged.vms[vmId] = otherVM;
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Enrich a base VM with metadata from another VM.
+ * Fills in fields that are missing from the base.
+ * Mutates baseVM in place.
+ */
+function enrichVM(baseVM: VM, otherVM: VM): void {
+  if (otherVM.operatingSystem && !baseVM.operatingSystem) {
+    baseVM.operatingSystem = otherVM.operatingSystem;
+  }
+  if (otherVM.restorePowerState && !baseVM.restorePowerState) {
+    baseVM.restorePowerState = otherVM.restorePowerState;
+  }
+  if (otherVM.newName && !baseVM.newName) {
+    baseVM.newName = otherVM.newName;
+  }
+  if (otherVM.error && !baseVM.error) {
+    baseVM.error = otherVM.error;
+  }
+  if (otherVM.conditions && (!baseVM.conditions || baseVM.conditions.length === 0)) {
+    baseVM.conditions = otherVM.conditions;
+  }
+  if (otherVM.warmInfo && !baseVM.warmInfo) {
+    baseVM.warmInfo = otherVM.warmInfo;
+    baseVM.precopyCount = otherVM.precopyCount;
   }
 }
 
