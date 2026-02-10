@@ -75,6 +75,12 @@ export function PlanCard({ plan }: PlanCardProps) {
             {plan.status}
           </span>
 
+          {plan.archived && (
+            <span className="px-2 py-1 rounded-full text-xs font-semibold uppercase tracking-wider bg-slate-100 dark:bg-gray-500/20 text-slate-600 dark:text-gray-400">
+              Archived
+            </span>
+          )}
+
           <svg
             className={`w-5 h-5 text-slate-400 dark:text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
             fill="none"

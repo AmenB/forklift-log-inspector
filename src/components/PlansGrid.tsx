@@ -12,7 +12,9 @@ export function PlansGrid() {
     let result = plans;
 
     // Apply status filter
-    if (statusFilter !== 'all') {
+    if (statusFilter === 'Archived') {
+      result = result.filter((plan) => plan.archived);
+    } else if (statusFilter !== 'all') {
       result = result.filter((plan) => plan.status === statusFilter);
     }
 

@@ -18,6 +18,9 @@ export function SearchFilter() {
     };
 
     for (const plan of plans) {
+      if (plan.archived) {
+        counts.Archived++;
+      }
       if (plan.status in counts) {
         counts[plan.status as keyof typeof counts]++;
       }

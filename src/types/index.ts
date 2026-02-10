@@ -1,6 +1,6 @@
 // Types for the Forklift Log Inspector
 
-export type PlanStatus = 'Pending' | 'Ready' | 'Running' | 'Succeeded' | 'Failed' | 'Archived';
+export type PlanStatus = 'Pending' | 'Ready' | 'Running' | 'Succeeded' | 'Failed';
 export type MigrationType = 'Unknown' | 'Warm' | 'Cold' | 'OnlyConversion';
 
 export interface Condition {
@@ -183,6 +183,7 @@ export interface Plan {
   name: string;
   namespace: string;
   status: PlanStatus;
+  archived: boolean;
   migrationType: MigrationType;
   migration?: string;
   conditions: Condition[];

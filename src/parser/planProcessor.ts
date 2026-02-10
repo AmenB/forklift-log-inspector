@@ -38,7 +38,7 @@ export function processPlanLog(store: LogStore, entry: LogEntry, ts: Date): void
 
   // Check for archived plan
   if (msg.includes('Aborting reconcile of archived plan')) {
-    plan.status = PlanStatuses.Archived;
+    plan.archived = true;
     return;
   }
 

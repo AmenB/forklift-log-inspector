@@ -187,7 +187,7 @@ export function parsePlanYaml(content: string): ParsedData {
     running: plans.filter(p => p.status === PlanStatuses.Running).length,
     succeeded: plans.filter(p => p.status === PlanStatuses.Succeeded).length,
     failed: plans.filter(p => p.status === PlanStatuses.Failed).length,
-    archived: plans.filter(p => p.status === PlanStatuses.Archived).length,
+    archived: plans.filter(p => p.archived).length,
     pending: plans.filter(p => p.status === PlanStatuses.Pending || p.status === PlanStatuses.Ready).length,
   };
 
@@ -218,25 +218,23 @@ function convertPlanResource(resource: YamlPlanResource): Plan {
     timestamp: new Date(c.lastTransitionTime || 0),
   }));
 
+  const archived = !!resource.spec?.archived;
+
   let status = PlanStatuses.Pending as string;
-  if (resource.spec?.archived) {
-    status = PlanStatuses.Archived;
-  } else {
-    for (const cond of conditions) {
-      if (cond.type === 'Succeeded' && cond.status === 'True') {
-        status = PlanStatuses.Succeeded;
-        break;
-      }
-      if (cond.type === 'Failed' && cond.status === 'True') {
-        status = PlanStatuses.Failed;
-        break;
-      }
-      if (cond.type === 'Executing' && cond.status === 'True') {
-        status = PlanStatuses.Running;
-      }
-      if (cond.type === 'Ready' && cond.status === 'True' && status === PlanStatuses.Pending) {
-        status = PlanStatuses.Ready;
-      }
+  for (const cond of conditions) {
+    if (cond.type === 'Succeeded' && cond.status === 'True') {
+      status = PlanStatuses.Succeeded;
+      break;
+    }
+    if (cond.type === 'Failed' && cond.status === 'True') {
+      status = PlanStatuses.Failed;
+      break;
+    }
+    if (cond.type === 'Executing' && cond.status === 'True') {
+      status = PlanStatuses.Running;
+    }
+    if (cond.type === 'Ready' && cond.status === 'True' && status === PlanStatuses.Pending) {
+      status = PlanStatuses.Ready;
     }
   }
 
@@ -279,6 +277,7 @@ function convertPlanResource(resource: YamlPlanResource): Plan {
     name,
     namespace,
     status: status as Plan['status'],
+    archived,
     migrationType,
     conditions,
     vms,

@@ -13,7 +13,6 @@ export const PlanStatuses = {
   Running: 'Running',
   Succeeded: 'Succeeded',
   Failed: 'Failed',
-  Archived: 'Archived',
 } as const;
 
 // Pipeline steps

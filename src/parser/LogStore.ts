@@ -50,6 +50,7 @@ export class LogStore {
         name,
         namespace,
         status: PlanStatuses.Pending,
+        archived: false,
         migrationType: MigrationTypes.Unknown,
         conditions: [],
         vms: {},
@@ -186,6 +187,9 @@ export class LogStore {
     };
 
     for (const plan of this.plans.values()) {
+      if (plan.archived) {
+        summary.archived++;
+      }
       switch (plan.status) {
         case PlanStatuses.Running:
           summary.running++;
@@ -195,9 +199,6 @@ export class LogStore {
           break;
         case PlanStatuses.Failed:
           summary.failed++;
-          break;
-        case PlanStatuses.Archived:
-          summary.archived++;
           break;
         case PlanStatuses.Pending:
         case PlanStatuses.Ready:
