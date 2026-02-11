@@ -125,39 +125,61 @@ export function V2VPipelineView({ toolRun }: V2VPipelineViewProps) {
             <div key={idx} className="flex flex-col items-center">
               {/* Row with stage box + connector */}
               <div className="flex items-center">
-                <div
-                  onClick={hasContent ? () => setExpandedStage(isExpanded ? null : idx) : undefined}
-                  className={`
-                    relative px-3 py-2 rounded-lg text-xs max-w-[200px] transition-all border-2
-                    ${isConversion ? 'font-bold' : 'font-medium'}
-                    ${hasContent ? 'cursor-pointer' : ''}
-                    ${isExpanded ? 'shadow-md shadow-emerald-200 dark:shadow-emerald-900/40' : ''}
-                    ${hasError
-                      ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-400 dark:border-red-600'
-                      : isLast
-                        ? 'bg-emerald-500 dark:bg-emerald-600 text-white border-emerald-500 dark:border-emerald-600'
-                        : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 border-emerald-400 dark:border-emerald-600'
-                    }
-                    ${hasContent && !isExpanded && !hasError ? 'hover:bg-emerald-100 dark:hover:bg-emerald-900/30 hover:shadow-sm' : ''}
-                    ${hasContent && !isExpanded && hasError ? 'hover:bg-red-100 dark:hover:bg-red-900/40 hover:shadow-sm' : ''}
-                  `}
-                  title={`${stage.name}\nAt: ${formatDuration(stage.elapsedSeconds)}${stage.durationSeconds !== null ? `\nDuration: ${formatDuration(stage.durationSeconds)}` : ''}${hasContent ? '\nClick to view output' : ''}\nLine: ${stage.lineNumber + 1}`}
-                >
-                  <span className="block truncate leading-tight text-center">
-                    {shortenStageName(stage.name)}
-                  </span>
-
-                  {/* Badge with content line count */}
-                  {hasContent && contentLines > 0 && (
-                    <span
-                      className={`absolute -top-2.5 -right-2.5 min-w-[20px] h-5 flex items-center justify-center px-1 rounded-full text-[9px] font-bold border-2 border-white dark:border-slate-900 ${
-                        hasError
-                          ? 'bg-red-500 text-white'
-                          : 'bg-emerald-500 text-white'
-                      }`}
-                    >
-                      {contentLines > 999 ? `${(contentLines / 1000).toFixed(0)}k` : contentLines}
+                {/* Stage box + progress bar column — keeps progress bar same width as button */}
+                <div className="flex flex-col items-stretch">
+                  <div
+                    role={hasContent ? 'button' : undefined}
+                    tabIndex={hasContent ? 0 : undefined}
+                    aria-expanded={hasContent ? isExpanded : undefined}
+                    onClick={hasContent ? () => setExpandedStage(isExpanded ? null : idx) : undefined}
+                    onKeyDown={hasContent ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedStage(isExpanded ? null : idx); } } : undefined}
+                    className={`
+                      relative px-3 py-2 rounded-lg text-xs max-w-[200px] transition-all border-2
+                      ${isConversion ? 'font-bold' : 'font-medium'}
+                      ${hasContent ? 'cursor-pointer' : ''}
+                      ${isExpanded ? 'shadow-md shadow-emerald-200 dark:shadow-emerald-900/40' : ''}
+                      ${hasError
+                        ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-400 dark:border-red-600'
+                        : isLast
+                          ? 'bg-emerald-500 dark:bg-emerald-600 text-white border-emerald-500 dark:border-emerald-600'
+                          : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 border-emerald-400 dark:border-emerald-600'
+                      }
+                      ${hasContent && !isExpanded && !hasError ? 'hover:bg-emerald-100 dark:hover:bg-emerald-900/30 hover:shadow-sm' : ''}
+                      ${hasContent && !isExpanded && hasError ? 'hover:bg-red-100 dark:hover:bg-red-900/40 hover:shadow-sm' : ''}
+                    `}
+                    title={`${stage.name}\nAt: ${formatDuration(stage.elapsedSeconds)}${stage.durationSeconds !== null ? `\nDuration: ${formatDuration(stage.durationSeconds)}` : ''}${hasContent ? '\nClick to view output' : ''}\nLine: ${stage.lineNumber + 1}`}
+                  >
+                    <span className="block truncate leading-tight text-center">
+                      {shortenStageName(stage.name)}
                     </span>
+
+                    {/* Badge with content line count */}
+                    {hasContent && contentLines > 0 && (
+                      <span
+                        className={`absolute -top-2.5 -right-2.5 min-w-[20px] h-5 flex items-center justify-center px-1 rounded-full text-[9px] font-bold border-2 border-white dark:border-slate-900 ${
+                          hasError
+                            ? 'bg-red-500 text-white'
+                            : 'bg-emerald-500 text-white'
+                        }`}
+                      >
+                        {contentLines > 999 ? `${(contentLines / 1000).toFixed(0)}k` : contentLines}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Progress bar — below button, same width via items-stretch */}
+                  {stage.progress && (
+                    <div className="mt-1 px-0.5">
+                      <div className="h-1.5 bg-emerald-100 dark:bg-emerald-900/30 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-500 rounded-full transition-all"
+                          style={{ width: `${stage.progress.percentComplete}%` }}
+                        />
+                      </div>
+                      <span className="text-[9px] text-emerald-600 dark:text-emerald-400">
+                        {stage.progress.percentComplete}%
+                      </span>
+                    </div>
                   )}
                 </div>
 
@@ -166,21 +188,6 @@ export function V2VPipelineView({ toolRun }: V2VPipelineViewProps) {
                   <div className="w-5 h-0.5 bg-emerald-300 dark:bg-emerald-700 flex-shrink-0" />
                 )}
               </div>
-
-              {/* Progress bar for disk copy stages */}
-              {stage.progress && (
-                <div className="mt-1 w-full max-w-[200px]">
-                  <div className="h-1.5 bg-emerald-100 dark:bg-emerald-900/30 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500 rounded-full transition-all"
-                      style={{ width: `${stage.progress.percentComplete}%` }}
-                    />
-                  </div>
-                  <span className="text-[9px] text-emerald-600 dark:text-emerald-400">
-                    {stage.progress.percentComplete}%
-                  </span>
-                </div>
-              )}
 
               {/* Timing below */}
               <div className="mt-1 flex flex-col items-center">
@@ -532,6 +539,7 @@ function StageHostCommands({ commands }: { commands: V2VHostCommand[] }) {
     <div className="mx-5 my-3 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
         className="w-full flex items-center justify-between px-4 py-2 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
       >
         <span className="text-xs font-semibold text-slate-700 dark:text-gray-300">
@@ -646,6 +654,7 @@ function RawLogWithSearch({
         <input
           type="text"
           placeholder="Search raw log..."
+          aria-label="Search raw log"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           className="flex-1 text-xs px-2 py-1 border border-slate-200 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-gray-100 placeholder:text-slate-400 outline-none focus:border-indigo-400 dark:focus:border-indigo-500"

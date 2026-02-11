@@ -650,6 +650,7 @@ function DeviceTree({
     <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
         className="w-full flex items-center gap-3 px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left"
       >
         <span className="text-[10px] text-indigo-500 dark:text-indigo-400 flex-shrink-0">
@@ -806,7 +807,11 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
   return (
     <div ref={nodeRef}>
       <div
+        role={isDir || isExpandableLeaf ? 'button' : undefined}
+        tabIndex={isDir || isExpandableLeaf ? 0 : undefined}
+        aria-expanded={isDir ? expanded : isExpandableLeaf ? showDetails : undefined}
         onClick={isDir ? toggle : isExpandableLeaf ? () => setShowDetails(!showDetails) : undefined}
+        onKeyDown={isDir || isExpandableLeaf ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (isDir) { toggle(); } else { setShowDetails((prev) => !prev); } } } : undefined}
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
         className={`
           flex items-center gap-1.5 py-0.5 rounded transition-colors duration-700

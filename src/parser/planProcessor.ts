@@ -1,7 +1,26 @@
-import type { LogEntry, Plan, Condition, RawLogEntry, WarmInfo, PrecopyInfo } from '../types';
+import type { LogEntry, Plan, VM, Condition, RawLogEntry, WarmInfo, PrecopyInfo } from '../types';
 import { LogStore } from './LogStore';
-import { PlanStatuses, Phases, ConditionStatus, PrecopyLoopPhasesSet, PrecopyLoopStartPhase } from './constants';
+import { PlanStatuses, Phases, ConditionStatus, PrecopyLoopPhasesSet, PrecopyLoopStartPhase, MigrationTypes } from './constants';
 import { getVMInfo, truncate, getStringFromMap } from './utils';
+
+/**
+ * Create a new VM object with the given id, name, and timestamp.
+ */
+function createVM(id: string, name: string, ts: Date): VM {
+  return {
+    id,
+    name,
+    currentPhase: '',
+    currentStep: '',
+    migrationType: MigrationTypes.Unknown,
+    phaseHistory: [],
+    dataVolumes: [],
+    createdResources: [],
+    phaseLogs: {},
+    firstSeen: ts,
+    lastSeen: ts,
+  };
+}
 
 /**
  * Process plan-related log entries
@@ -184,19 +203,7 @@ export function ensureVMExists(plan: Plan, entry: LogEntry, ts: Date): void {
 
   let vm = plan.vms[vmID];
   if (!vm) {
-    vm = {
-      id: vmID,
-      name: vmName,
-      currentPhase: '',
-      currentStep: '',
-      migrationType: 'Unknown',
-      phaseHistory: [],
-      dataVolumes: [],
-      createdResources: [],
-      phaseLogs: {},
-      firstSeen: ts,
-      lastSeen: ts,
-    };
+    vm = createVM(vmID, vmName, ts);
     plan.vms[vmID] = vm;
   }
 
@@ -236,19 +243,7 @@ function processVMPhase(store: LogStore, plan: Plan, entry: LogEntry, ts: Date):
 
   let vm = plan.vms[vmID];
   if (!vm) {
-    vm = {
-      id: vmID,
-      name: vmName,
-      currentPhase: '',
-      currentStep: '',
-      migrationType: 'Unknown',
-      phaseHistory: [],
-      dataVolumes: [],
-      createdResources: [],
-      phaseLogs: {},
-      firstSeen: ts,
-      lastSeen: ts,
-    };
+    vm = createVM(vmID, vmName, ts);
     plan.vms[vmID] = vm;
   }
 

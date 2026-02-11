@@ -222,6 +222,7 @@ export function V2VRawLogViewer({ toolRun }: V2VRawLogViewerProps) {
           <input
             type="text"
             placeholder="Search log..."
+            aria-label="Search log"
             value={localSearch}
             onChange={(e) => handleSearchChange(e.target.value)}
             onKeyDown={(e) => {

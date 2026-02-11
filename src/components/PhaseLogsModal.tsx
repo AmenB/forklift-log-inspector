@@ -203,8 +203,10 @@ export function PhaseLogsModal({ phase, vmName, logs, summary, iterations, warmI
 
         {/* Tab switcher for warm info */}
         {hasWarmInfo && (
-          <div className="px-6 py-2 border-b border-slate-200 dark:border-slate-700 flex gap-1">
+          <div role="tablist" className="px-6 py-2 border-b border-slate-200 dark:border-slate-700 flex gap-1">
             <button
+              role="tab"
+              aria-selected={activeTab === 'visual'}
               onClick={() => setActiveTab('visual')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 activeTab === 'visual'
@@ -220,6 +222,8 @@ export function PhaseLogsModal({ phase, vmName, logs, summary, iterations, warmI
               </span>
             </button>
             <button
+              role="tab"
+              aria-selected={activeTab === 'logs'}
               onClick={() => setActiveTab('logs')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 activeTab === 'logs'

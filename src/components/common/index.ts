@@ -1,4 +1,5 @@
 export { CopyButton } from './CopyButton';
+export { CollapsibleCard } from './CollapsibleCard';
 export { EmptyState } from './EmptyState';
 export { JsonViewer, formatRawJson } from './JsonViewer';
 export { LogFilterBar } from './LogFilterBar';
@@ -7,3 +8,7 @@ export type { LogGroupCardProps } from './LogGroupCard';
 export { Modal } from './Modal';
 export { SearchHighlight } from './SearchHighlight';
 export { StackTraceView } from './StackTraceView';
+export { TabSwitcher } from './TabSwitcher';
+export type { Tab } from './TabSwitcher';
+export { useSearchNavigation } from './useSearchNavigation';
+export type { UseSearchNavigationOptions, UseSearchNavigationReturn } from './useSearchNavigation';

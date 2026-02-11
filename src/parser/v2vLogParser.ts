@@ -12,35 +12,95 @@ import type {
   V2VGuestCommand,
   V2VHostCommand,
   V2VGuestInfo,
-  V2VDriveMapping,
-  V2VFstabEntry,
-  V2VInstalledApp,
   V2VRegistryHiveAccess,
   V2VFileCopy,
+  V2VInstalledApp,
   V2VError,
   V2VLineCategory,
   V2VComponentVersions,
   V2VDiskSummary,
   V2VSourceVM,
-  V2VExitStatus,
 } from '../types/v2v';
 
+import {
+  HivexSessionState,
+  flushHivexSession,
+  decodeHivexData,
+} from './v2v/hivexParser';
+
+import {
+  finalizeNbdkit,
+  NBDKIT_SOCKET_RE,
+  NBDKIT_URI_RE,
+  NBDKIT_PLUGIN_RE,
+  NBDKIT_FILTER_RE,
+  NBDKIT_FILE_RE,
+  NBDKIT_SERVER_RE,
+  NBDKIT_VM_RE,
+  NBDKIT_TRANSPORT_RE,
+  COW_FILE_SIZE_RE,
+} from './v2v/nbdkitParser';
+
+import {
+  buildGuestInfo,
+  parseInstalledApps,
+  parseLibvirtXML,
+} from './v2v/guestInfoParser';
+
+import {
+  extractOriginalSize,
+  extractReadFileContent,
+  extractWriteContent,
+} from './v2v/fileCopyParser';
+
+import {
+  categorizeLine,
+  isKnownPrefix,
+  isNoisyCommand,
+  parseCommandArgs,
+  isErrorFalsePositive,
+  extractSource,
+  inferExitStatus,
+  buildHostCommand,
+  findQueueByApiName,
+  attachGuestfsdToApiCall,
+  parseVersionFields,
+  STAGE_RE,
+  KERNEL_BOOT_RE,
+  ERROR_RE,
+  WARNING_RE,
+  MONITOR_PROGRESS_RE,
+  MONITOR_DISK_RE,
+  HOST_FREE_SPACE_RE,
+  LIBGUESTFS_TRACE_RE,
+  LIBGUESTFS_DRIVE_RE,
+  LIBGUESTFS_MEMSIZE_RE,
+  LIBGUESTFS_SMP_RE,
+  LIBGUESTFS_BACKEND_RE,
+  LIBGUESTFS_ID_RE,
+  COMMAND_RE,
+  CMD_RETURN_RE,
+  CMD_STDOUT_RE,
+  COMMANDRVF_META_RE,
+  COMMANDRVF_EXEC_RE,
+  CHROOT_RE,
+  LIBGUESTFS_CMD_RE,
+  GUESTFSD_START_RE,
+  GUESTFSD_END_RE,
+} from './v2v/v2vHelpers';
+
 // ────────────────────────────────────────────────────────────────────────────
-// Internal types
+// Regex patterns (preprocessing / boundary detection only)
 // ────────────────────────────────────────────────────────────────────────────
 
-/** Mutable state for tracking a hivex registry session within the parser. */
-interface HivexSessionState {
-  hivePath: string;
-  mode: 'read' | 'write';
-  keySegments: string[];
-  values: { name: string; value: string; lineNumber: number }[];
-  pendingGetValueName: string | null;
-  lineNumber: number;
-  rootHandle: string;
-  hasWriteOp: boolean;
-  firstWriteLine: number;
-}
+/** Container / k8s timestamp prefix: `2026-01-21T00:57:24.837772290Z ` */
+const CONTAINER_TS_PREFIX_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+/;
+
+/** `Building command: tool [args]` (with space, bracket args) */
+const BUILD_CMD_SPACE_RE = /^Building command:\s*(\S+)\s+\[(.*)]/;
+
+/** `Building command:tool[args]` (no space, bracket args) */
+const BUILD_CMD_NOSPACE_RE = /Building command:(\S+?)\[([^\]]*)\]/g;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Detection
@@ -66,137 +126,19 @@ export function isV2VLog(content: string): boolean {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Regex patterns
-// ────────────────────────────────────────────────────────────────────────────
-
-/** virt-v2v pipeline stage: `[   0.0] Setting up the source` (1 decimal) */
-const STAGE_RE = /^\[\s*(\d+\.\d)\]\s+(.+)$/;
-
-/** Kernel boot line: `[    0.000000]` (3+ decimals) */
-const KERNEL_BOOT_RE = /^\[\s*\d+\.\d{3,}\]/;
-
-/** Container / k8s timestamp prefix: `2026-01-21T00:57:24.837772290Z ` */
-const CONTAINER_TS_PREFIX_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+/;
-
-/** `Building command: tool [args]` (with space, bracket args) */
-const BUILD_CMD_SPACE_RE = /^Building command:\s*(\S+)\s+\[(.*)]/;
-
-/** `Building command:tool[args]` (no space, bracket args) */
-const BUILD_CMD_NOSPACE_RE = /Building command:(\S+?)\[([^\]]*)\]/g;
-
-/** nbdkit socket path */
-const NBDKIT_SOCKET_RE = /--unix['\s]+([^\s']+)/;
-
-/** nbdkit NBD URI */
-const NBDKIT_URI_RE = /NBD URI:\s*(\S+)/;
-
-/** nbdkit plugin registration */
-const NBDKIT_PLUGIN_RE = /registered plugin\s+\S+\s+\(name\s+(\w+)\)/;
-
-/** nbdkit filter registration */
-const NBDKIT_FILTER_RE = /registered filter\s+\S+\s+\(name\s+(\w+)\)/;
-
-/** nbdkit file= config */
-const NBDKIT_FILE_RE = /config key=file, value=(.+)/;
-
-/** libguestfs trace api call — captures: [1]=handle (v2v, virtio_win, ...), [2]=api name, [3]=args */
-const LIBGUESTFS_TRACE_RE = /^libguestfs: trace: (\w+): (\S+)\s*(.*)/;
-
-/** libguestfs add_drive */
-const LIBGUESTFS_DRIVE_RE =
-  /add_drive\s+"([^"]*)"\s+"format:([^"]*)"\s+"protocol:([^"]*)"\s+"server:([^"]*)"/;
-
-/** libguestfs set_memsize */
-const LIBGUESTFS_MEMSIZE_RE = /set_memsize\s+(\d+)/;
-
-/** libguestfs set_smp */
-const LIBGUESTFS_SMP_RE = /set_smp\s+(\d+)/;
-
-/** libguestfs backend */
-const LIBGUESTFS_BACKEND_RE = /^libguestfs: launch: backend=(.+)/;
-
-/** libguestfs identifier from kernel command line */
-const LIBGUESTFS_ID_RE = /guestfs_identifier=(\S+)/;
-
-/** command execution: `command: blkid '-c' ...` */
-const COMMAND_RE = /^command:\s+(\S+)\s*(.*)/;
-
-/** command return code: `command: blkid returned 0` */
-const CMD_RETURN_RE = /^command:\s+(\S+)\s+returned\s+(\d+)/;
-
-/** command stdout header: `command: blkid: stdout:` */
-const CMD_STDOUT_RE = /^command:\s+(\S+):\s+stdout:$/;
-
-/** commandrvf metadata: `commandrvf: stdout=y stderr=y flags=0x0` */
-const COMMANDRVF_META_RE = /^commandrvf:\s+stdout=[yn]\s+stderr=[yn]\s+flags=/;
-
-/** commandrvf execution: `commandrvf: udevadm --debug settle` */
-const COMMANDRVF_EXEC_RE = /^commandrvf:\s+(\S+)\s*(.*)/;
-
-/** chroot execution */
-const CHROOT_RE = /^chroot:\s+(\S+):\s+running\s+'([^']+)'/;
-
-/** libguestfs command: run: */
-const LIBGUESTFS_CMD_RE = /^libguestfs: command: run:\s*(.*)/;
-
-/** virt-v2v monitoring progress */
-const MONITOR_PROGRESS_RE = /virt-v2v monitoring:\s*Progress update, completed\s+(\d+)\s*%/;
-
-/** virt-v2v monitoring disk copy */
-const MONITOR_DISK_RE = /virt-v2v monitoring:\s*Copying disk\s+(\d+)\s+out of\s+(\d+)/;
-
-/** guestfsd request start: `guestfsd: <= list_partitions (0x8) request length 40 bytes` */
-const GUESTFSD_START_RE = /^guestfsd:\s+<=\s+(\w+)\s+\(0x[\da-f]+\)/i;
-
-/** guestfsd request end: `guestfsd: => list_partitions (0x8) took 0.04 secs` */
-const GUESTFSD_END_RE = /^guestfsd:\s+=>\s+(\w+)\s+\(0x[\da-f]+\)\s+took\s+([\d.]+)\s+secs/i;
-
-/** error patterns (context-aware) */
-const ERROR_RE = /\berror[:\s]/i;
-const WARNING_RE = /\bwarning[:\s]/i;
-
-// ── Version detection regexes ─────────────────────────────────────────────
-
-/** info: virt-v2v: virt-v2v 2.7.1rhel=9,release=8.el9_6 (x86_64) */
-const VERSION_VIRTV2V_RE = /^info:\s*(?:virt-v2v[\w-]*):\s*virt-v2v\s+([\d.]+\S*)/;
-/** info: libvirt version: 10.10.0 */
-const VERSION_LIBVIRT_RE = /^info:\s*libvirt version:\s*([\d.]+)/;
-/** nbdkit 1.38.5 (nbdkit-...) */
-const VERSION_NBDKIT_RE = /\bnbdkit\s+([\d]+\.[\d]+\.[\d]+)/;
-/** VMware VixDiskLib (7.0.3) Release ... */
-const VERSION_VDDK_RE = /VMware VixDiskLib \(([\d.]+)\)/;
-/** libguestfs: qemu version: 9.1  or  qemu version (reported by libvirt) = 10000000 */
-const VERSION_QEMU_RE = /libguestfs:\s*qemu version[^:]*:\s*([\d.]+)/;
-/** libguestfs: trace: v2v: version = <struct guestfs_version = major: 1, minor: 56, release: 1 */
-const VERSION_LIBGUESTFS_RE =
-  /libguestfs: trace: \w+: version = <struct guestfs_version = major: (\d+), minor: (\d+), release: (\d+)/;
-
-// ── Disk / storage regexes ────────────────────────────────────────────────
-
-/** check_host_free_space: large_tmpdir=/var/tmp free_space=56748552192 */
-const HOST_FREE_SPACE_RE = /^check_host_free_space:\s+large_tmpdir=(\S+)\s+free_space=(\d+)/;
-/** nbdkit: vddk[N]: debug: cow: underlying file size: NNNN */
-const COW_FILE_SIZE_RE = /cow:\s+underlying file size:\s+(\d+)/;
-/** nbdkit config key=server, value=10.6.46.159 */
-const NBDKIT_SERVER_RE = /config key=server, value=(\S+)/;
-/** nbdkit config key=vm, value=moref=vm-152 */
-const NBDKIT_VM_RE = /config key=vm, value=moref=(\S+)/;
-/** nbdkit transport mode: nbdssl */
-const NBDKIT_TRANSPORT_RE = /transport mode:\s*(\w+)/;
-
-/** false-positive error patterns to ignore */
-const ERROR_FALSE_POSITIVES = [
-  /get_backend_setting = NULL \(error\)/,
-  /usbserial.*error/i,
-  /error: No error/,
-  /TLS disabled/,
-];
-
-// ────────────────────────────────────────────────────────────────────────────
 // Main parser
 // ────────────────────────────────────────────────────────────────────────────
 
 export function parseV2VLog(content: string): V2VParsedData {
+  try {
+    return parseV2VLogImpl(content);
+  } catch (err) {
+    console.error('parseV2VLog failed:', err);
+    return { toolRuns: [], totalLines: 0 };
+  }
+}
+
+function parseV2VLogImpl(content: string): V2VParsedData {
   const rawLines = content.split('\n');
 
   // Pre-process: split concatenated Building-command lines (virt-v2v.logs style)
@@ -1360,709 +1302,4 @@ function parseToolRunSection(
     rawLines: sectionLines,
     lineCategories,
   };
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────────────
-
-function categorizeLine(line: string): V2VLineCategory {
-  if (KERNEL_BOOT_RE.test(line)) return 'kernel';
-  if (STAGE_RE.test(line)) return 'stage';
-  if (line.startsWith('nbdkit:') || line.startsWith('running nbdkit')) return 'nbdkit';
-  if (line.startsWith('libguestfs:')) return 'libguestfs';
-  if (line.startsWith('guestfsd:')) return 'guestfsd';
-  if (line.startsWith('command:') || line.startsWith('commandrvf:') || line.startsWith('chroot:'))
-    return 'command';
-  if (line.startsWith('info:')) return 'info';
-  if (/virt-v2v monitoring:/i.test(line)) return 'monitor';
-  if (line.trimStart().startsWith('<')) return 'xml';
-  if (/^\s*(apiVersion:|kind:|metadata:|spec:|status:|---\s*$)/.test(line)) return 'yaml';
-  if (WARNING_RE.test(line)) return 'warning';
-  if (ERROR_RE.test(line) && !isErrorFalsePositive(line)) return 'error';
-  return 'other';
-}
-
-function finalizeNbdkit(
-  nbdkit: Partial<NbdkitConnection>,
-  map: Map<string, NbdkitConnection>,
-  endLine: number,
-) {
-  const id = nbdkit.socketPath || `nbdkit-${map.size}`;
-  if (!map.has(id)) {
-    map.set(id, {
-      id,
-      socketPath: nbdkit.socketPath || '',
-      uri: nbdkit.uri || '',
-      plugin: nbdkit.plugin || '',
-      filters: nbdkit.filters || [],
-      diskFile: nbdkit.diskFile || '',
-      startLine: nbdkit.startLine || endLine,
-      endLine,
-      logLines: nbdkit.logLines || [],
-      server: nbdkit.server,
-      vmMoref: nbdkit.vmMoref,
-      transportMode: nbdkit.transportMode,
-      backingSize: nbdkit.backingSize,
-    });
-  }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Extracted helpers to reduce duplication in parseToolRunSection
-// ────────────────────────────────────────────────────────────────────────────
-
-/** Data-driven version detection: try each regex against the line. */
-const VERSION_MATCHERS: { key: keyof V2VComponentVersions; re: RegExp; fmt?: (m: RegExpMatchArray) => string }[] = [
-  { key: 'virtV2v', re: VERSION_VIRTV2V_RE },
-  { key: 'libvirt', re: VERSION_LIBVIRT_RE },
-  { key: 'nbdkit', re: VERSION_NBDKIT_RE },
-  { key: 'vddk', re: VERSION_VDDK_RE },
-  { key: 'qemu', re: VERSION_QEMU_RE },
-  { key: 'libguestfs', re: VERSION_LIBGUESTFS_RE, fmt: (m) => `${m[1]}.${m[2]}.${m[3]}` },
-];
-
-function parseVersionFields(line: string, versions: V2VComponentVersions): void {
-  for (const { key, re, fmt } of VERSION_MATCHERS) {
-    if (!versions[key]) {
-      const m = line.match(re);
-      if (m) {
-        (versions as Record<string, string>)[key] = fmt ? fmt(m) : m[1];
-      }
-    }
-  }
-}
-
-/** Extract "original size N bytes" from a log line, or null. */
-const ORIGINAL_SIZE_RE = /original size (\d+) bytes/;
-function extractOriginalSize(line: string): number | null {
-  const m = line.match(ORIGINAL_SIZE_RE);
-  return m ? parseInt(m[1], 10) : null;
-}
-
-/**
- * Parse a single \xHH hex escape at position i in string s.
- * Returns the byte value and number of characters consumed, or null.
- */
-function parseHexEscapeAt(s: string, i: number): { byte: number; consumed: number } | null {
-  if (s[i] === '\\' && i + 3 < s.length && s[i + 1] === 'x') {
-    const hex = s.substring(i + 2, i + 4);
-    const val = parseInt(hex, 16);
-    if (!isNaN(val)) return { byte: val, consumed: 4 };
-  }
-  return null;
-}
-
-/** Flush a hivex session into the accesses array if it has data. */
-function flushHivexSession(
-  session: HivexSessionState | null,
-  accesses: V2VRegistryHiveAccess[],
-): void {
-  if (!session) return;
-  const keyPath = session.keySegments.join('\\');
-
-  // Skip empty sessions — no path and no values means nothing meaningful to record
-  if (!keyPath && session.values.length === 0) return;
-
-  // Determine actual mode: use hasWriteOp to distinguish read navigations
-  // within a write-mode session from actual write operations
-  const actualMode: 'read' | 'write' = session.hasWriteOp ? 'write' : 'read';
-
-  // For writes, point to the first write operation; for reads, use navigation start
-  const lineNumber = (actualMode === 'write' && session.firstWriteLine)
-    ? session.firstWriteLine
-    : session.lineNumber;
-
-  // Avoid duplicate entries: if the last entry has the same hive, key path, mode, and
-  // line number, merge values into it instead of creating a new entry
-  const last = accesses.length > 0 ? accesses[accesses.length - 1] : null;
-  if (
-    last &&
-    last.hivePath === session.hivePath &&
-    last.keyPath === keyPath &&
-    last.mode === actualMode &&
-    last.lineNumber === lineNumber
-  ) {
-    // Merge values
-    last.values.push(...session.values);
-    return;
-  }
-
-  accesses.push({
-    hivePath: session.hivePath,
-    mode: actualMode,
-    keyPath,
-    values: session.values,
-    lineNumber,
-  });
-}
-
-/**
- * Infer the exit status of a tool run from available signals:
- * - "Finishing off" stage reached → likely success
- * - Fatal errors from virt-v2v/virt-v2v-in-place → error
- * - "virt-v2v monitoring: Finished" in raw lines → success
- */
-function inferExitStatus(
-  stages: V2VPipelineStage[],
-  errors: V2VError[],
-  rawLines: string[],
-): V2VExitStatus {
-  const hasFinishingOff = stages.some((s) => /Finishing off/i.test(s.name));
-  const hasMonitorFinished = rawLines.some((l) => /virt-v2v monitoring:\s*Finished/i.test(l));
-
-  // Fatal errors from the tool itself (not from libguestfs/nbdkit)
-  const hasFatalError = errors.some(
-    (e) =>
-      e.level === 'error' &&
-      /^virt-v2v/.test(e.source) &&
-      !/warning/i.test(e.message) &&
-      !/ignored\)/i.test(e.message),
-  );
-
-  if (hasFatalError && !hasFinishingOff) return 'error';
-  if (hasFinishingOff || hasMonitorFinished) return 'success';
-  if (hasFatalError) return 'error';
-
-  // No clear signal — if we have stages, the run is likely still in progress (log was captured mid-run)
-  if (stages.length > 0) return 'in_progress';
-  return 'unknown';
-}
-
-function buildHostCommand(parts: string[], lineNumber: number): V2VHostCommand {
-  const command = parts[0] || '';
-  const args = parts.slice(1);
-  return { command, args, lineNumber };
-}
-
-/**
- * Find the first open API call queue whose key ends with `:apiName`.
- * Keys are stored as `handle:apiName`.
- */
-function findQueueByApiName(
-  openApiCalls: Map<string, V2VApiCall[]>,
-  apiName: string,
-): V2VApiCall[] | undefined {
-  const suffix = `:${apiName}`;
-  for (const [key, queue] of openApiCalls) {
-    if (key.endsWith(suffix) && queue.length > 0) return queue;
-  }
-  return undefined;
-}
-
-/**
- * Attach collected guestfsd commands to the matching open API call.
- * Finds by name (FIFO) and moves commands into the API call's guestCommands array.
- */
-function attachGuestfsdToApiCall(
-  scope: { name: string; commands: V2VGuestCommand[] },
-  openApiCalls: Map<string, V2VApiCall[]>,
-  completedApiCalls: V2VApiCall[],
-) {
-  if (scope.commands.length === 0) return;
-
-  // Try open API calls first (by api name across all handles)
-  const queue = findQueueByApiName(openApiCalls, scope.name);
-  if (queue && queue.length > 0) {
-    queue[0].guestCommands.push(...scope.commands);
-    return;
-  }
-
-  // Fall back to the most recent completed API call with the same name
-  for (let i = completedApiCalls.length - 1; i >= 0; i--) {
-    if (completedApiCalls[i].name === scope.name) {
-      completedApiCalls[i].guestCommands.push(...scope.commands);
-      return;
-    }
-  }
-
-  // Last resort: attach to any open API call
-  for (const q of openApiCalls.values()) {
-    if (q.length > 0) {
-      q[0].guestCommands.push(...scope.commands);
-      return;
-    }
-  }
-}
-
-/**
- * Parse the result of `inspect_list_applications2` into structured app entries.
- *
- * Format: `= <struct guestfs_application2_list(N) = [0]{...} [1]{...} ...>`
- *
- * Values can contain commas (`VMware, Inc.`), braces (`{GUID}`), and backslashes (`C:\...`),
- * so we use `app2_` field prefixes as delimiters instead of commas.
- */
-
-// ── Hivex data decoder ──────────────────────────────────────────────────────
-
-/**
- * Decode the raw escaped byte data from hivex_node_set_value traces into
- * a human-readable string.
- *
- * Registry types:
- *   1 = REG_SZ (UTF-16LE string)
- *   2 = REG_EXPAND_SZ (UTF-16LE string with env-var refs)
- *   4 = REG_DWORD (32-bit LE integer)
- *   7 = REG_MULTI_SZ (series of null-terminated UTF-16LE strings)
- *   3 = REG_BINARY
- */
-function decodeHivexData(rawData: string, regType: number): string {
-  const bytes = parseEscapedHivexBytes(rawData);
-
-  if (regType === 4 && bytes.length >= 4) {
-    // REG_DWORD – little-endian 32-bit unsigned
-    const value = (bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | ((bytes[3] << 24) >>> 0)) >>> 0;
-    return String(value);
-  }
-
-  if (regType === 1 || regType === 2 || regType === 7) {
-    // REG_SZ / REG_EXPAND_SZ / REG_MULTI_SZ – UTF-16LE
-    return decodeUtf16LE(bytes);
-  }
-
-  // REG_BINARY or other – show hex summary
-  if (bytes.length <= 16) {
-    return bytes.map(b => b.toString(16).padStart(2, '0')).join(' ');
-  }
-  return `(${bytes.length} bytes)`;
-}
-
-/** Decode UTF-16LE bytes to a JS string, stopping at null terminator. */
-function decodeUtf16LE(bytes: number[]): string {
-  let result = '';
-  for (let i = 0; i + 1 < bytes.length; i += 2) {
-    const code = bytes[i] | (bytes[i + 1] << 8);
-    if (code === 0) break; // null terminator
-    result += String.fromCharCode(code);
-  }
-  return result;
-}
-
-/**
- * Parse the escaped byte string from libguestfs hivex trace output.
- *
- * libguestfs trace format:
- *   `\xHH` → byte value HH (hex) — used for non-printable bytes
- *   `\`    → literal backslash (byte 0x5C) when NOT followed by `xHH`
- *   any other char → its ASCII byte value
- *
- * IMPORTANT: libguestfs does NOT double-escape backslashes. A `\` in the
- * output is just byte 0x5C. So `\\x00` in the trace means byte 0x5C
- * followed by `\x00` (byte 0x00) — i.e. a UTF-16LE backslash character.
- */
-function parseEscapedHivexBytes(s: string): number[] {
-  const bytes: number[] = [];
-  let i = 0;
-  while (i < s.length) {
-    const esc = parseHexEscapeAt(s, i);
-    if (esc) {
-      bytes.push(esc.byte);
-      i += esc.consumed;
-    } else {
-      bytes.push(s.charCodeAt(i));
-      i++;
-    }
-  }
-  return bytes;
-}
-
-function parseInstalledApps(resultStr: string, apps: V2VInstalledApp[]) {
-  // Split entries by `} [N]{` boundaries (or start/end markers)
-  const listStart = resultStr.indexOf('[0]{');
-  if (listStart === -1) return;
-
-  const entriesStr = resultStr.slice(listStart);
-  // Split by `} [N]{` — each chunk is one app entry (with leading/trailing junk)
-  const rawEntries = entriesStr.split(/\}\s*\[\d+\]\{/);
-
-  for (const raw of rawEntries) {
-    // Clean: remove leading `[0]{` and trailing `}>` or `}`
-    const fields = raw.replace(/^\[\d+\]\{/, '').replace(/\}\s*>?\s*$/, '');
-
-    const app: V2VInstalledApp = {
-      name: extractAppField(fields, 'app2_name'),
-      displayName: extractAppField(fields, 'app2_display_name'),
-      version: extractAppField(fields, 'app2_version'),
-      publisher: extractAppField(fields, 'app2_publisher'),
-      installPath: extractAppField(fields, 'app2_install_path'),
-      description: extractAppField(fields, 'app2_description'),
-      arch: extractAppField(fields, 'app2_arch'),
-    };
-    if (app.displayName || app.name) {
-      apps.push(app);
-    }
-  }
-}
-
-/**
- * Extract a field value from the `app2_key: value, app2_next: ...` string.
- * Uses `, app2_` as the delimiter since values themselves can contain commas.
- */
-function extractAppField(fields: string, key: string): string {
-  const marker = `${key}: `;
-  const idx = fields.indexOf(marker);
-  if (idx === -1) return '';
-  const start = idx + marker.length;
-  // Value runs until the next `, app2_` boundary
-  const nextField = fields.indexOf(', app2_', start);
-  if (nextField === -1) {
-    // Last field — strip trailing comma/whitespace
-    return fields.slice(start).replace(/,?\s*$/, '').trim();
-  }
-  return fields.slice(start, nextField).trim();
-}
-
-/**
- * Build a V2VGuestInfo from the collected `i_` key-value pairs.
- *
- * Windows drive mappings format: `i_drive_mappings = E => /dev/sdb1; D => /dev/sda1; C => /dev/sdc2`
- * Linux fstab format (from structured block): `fstab: [(/dev/rhel/root, /), (/dev/sda2, /boot), ...]`
- */
-function buildGuestInfo(raw: Map<string, string>): V2VGuestInfo {
-  // Parse Windows drive mappings — two possible formats:
-  // i_ format: "E => /dev/sdb1; D => /dev/sda1; C => /dev/sdc2"
-  // structured block format: "[(C, /dev/sda2), (E, /dev/sdb1), (F, /dev/sdc1)]"
-  const driveMappings: V2VDriveMapping[] = [];
-  const mappingsStr = raw.get('drive_mappings') || '';
-  if (mappingsStr) {
-    if (mappingsStr.includes('=>')) {
-      // i_ format
-      for (const part of mappingsStr.split(';')) {
-        const m = part.trim().match(/^(\w+)\s*=>\s*(.+)$/);
-        if (m) {
-          driveMappings.push({ letter: m[1], device: m[2].trim() });
-        }
-      }
-    } else {
-      // structured block format: [(C, /dev/sda2), ...]
-      const entryRe = /\((\w+),\s*([^)]+)\)/g;
-      let dm;
-      while ((dm = entryRe.exec(mappingsStr)) !== null) {
-        driveMappings.push({ letter: dm[1].trim(), device: dm[2].trim() });
-      }
-    }
-    driveMappings.sort((a, b) => a.letter.localeCompare(b.letter));
-  }
-
-  // Parse Linux fstab entries: [(/dev/rhel/root, /), (/dev/sda2, /boot), ...]
-  const fstab: V2VFstabEntry[] = [];
-  const fstabStr = raw.get('fstab') || '';
-  if (fstabStr) {
-    const entryRe = /\(([^,]+),\s*([^)]+)\)/g;
-    let fm;
-    while ((fm = entryRe.exec(fstabStr)) !== null) {
-      fstab.push({ device: fm[1].trim(), mountpoint: fm[2].trim() });
-    }
-  }
-
-  // Parse version: prefer i_major_version/i_minor_version, then CPE product version,
-  // then fall back to `version: X.Y`.
-  //
-  // The structured block format (from inspect_os / inspect_get_roots) sometimes
-  // reports the CPE *specification* version (e.g. `2.3`) as the OS version,
-  // which is wrong for distros like Amazon Linux 2023 whose real version is `2023`.
-  // When product_name is a CPE string, we extract the true version from the CPE.
-  let majorVersion = parseInt(raw.get('major_version') || '0', 10);
-  let minorVersion = parseInt(raw.get('minor_version') || '0', 10);
-  if (majorVersion === 0) {
-    // Try extracting version from CPE product_name first
-    const productName = raw.get('product_name') || '';
-    const cpeVersion = extractCPEVersion(productName);
-    if (cpeVersion) {
-      const vParts = cpeVersion.split('.');
-      majorVersion = parseInt(vParts[0] || '0', 10);
-      minorVersion = parseInt(vParts[1] || '0', 10);
-    }
-    // Fall back to the explicit version field
-    if (majorVersion === 0 && raw.has('version')) {
-      const vParts = (raw.get('version') || '').split('.');
-      majorVersion = parseInt(vParts[0] || '0', 10);
-      minorVersion = parseInt(vParts[1] || '0', 10);
-    }
-  }
-
-  return {
-    root: raw.get('root') || '',
-    type: raw.get('type') || '',
-    distro: raw.get('distro') || '',
-    osinfo: raw.get('osinfo') || '',
-    arch: raw.get('arch') || '',
-    majorVersion,
-    minorVersion,
-    productName: raw.get('product_name') || '',
-    productVariant: raw.get('product_variant') || '',
-    packageFormat: raw.get('package_format') || '',
-    packageManagement: raw.get('package_management') || '',
-    hostname: raw.get('hostname') || '',
-    buildId: raw.get('build_id') || '',
-    windowsSystemroot: raw.get('windows_systemroot') || '',
-    windowsSoftwareHive: raw.get('windows_software_hive') || '',
-    windowsSystemHive: raw.get('windows_system_hive') || '',
-    windowsCurrentControlSet: raw.get('windows_current_control_set') || '',
-    driveMappings,
-    fstab,
-  };
-}
-
-/**
- * Extract the product version from a CPE 2.3 string.
- * Format: `cpe:2.3:part:vendor:product:version:...`
- * Returns the version component (parts[5]) or empty string if not a CPE.
- */
-function extractCPEVersion(productName: string): string {
-  if (!productName.startsWith('cpe:')) return '';
-  const parts = productName.split(':');
-  if (parts.length >= 6) {
-    const ver = parts[5];
-    // `*` means unspecified in CPE
-    if (ver && ver !== '*') return ver;
-  }
-  return '';
-}
-
-/** Known line prefixes that indicate stdout capture should stop. */
-const KNOWN_PREFIXES = [
-  'command:',
-  'commandrvf:',
-  'chroot:',
-  'guestfsd:',
-  'libguestfs:',
-  'nbdkit:',
-  'supermin:',
-  'libnbd:',
-  'info:',
-  'virt-v2v',
-  'umount-all:',
-  'Building command',
-  'windows:',
-  'hivex:',
-  // Noisy udev / systemd / varlink / debug prefixes (stop stdout capture)
-  'udev:',
-  'udevadm:',
-  'varlink:',
-  'list_filesystems:',
-];
-
-function isKnownPrefix(line: string): boolean {
-  for (const prefix of KNOWN_PREFIXES) {
-    if (line.startsWith(prefix)) return true;
-  }
-  // Pipeline stages
-  if (STAGE_RE.test(line) && !KERNEL_BOOT_RE.test(line)) return true;
-  // Kernel boot lines
-  if (KERNEL_BOOT_RE.test(line)) return true;
-  // Common noisy stderr / interstitial lines
-  if (NOISY_LINE_RE.test(line)) return true;
-  // Corrupted / interleaved prefixes from concurrent process output
-  if (CORRUPTED_PREFIX_RE.test(line)) return true;
-  // Guest inspection info lines (i_root, i_type, etc.)
-  if (/^i_\w+\s*=/.test(line)) return true;
-  // Inspection structured block lines
-  if (/^inspect_/.test(line)) return true;
-  if (/^fs:\s+\/dev\//.test(line)) return true;
-  if (/^check_filesystem:/.test(line)) return true;
-  if (/^check_for_filesystem/.test(line)) return true;
-  if (/^get_windows_systemroot/.test(line)) return true;
-  // Root device header from inspect_get_roots: `/dev/sda1 (xfs):`
-  if (/^\/dev\/\S+\s+\(\w+\):/.test(line)) return true;
-  // Indented fields from inspect_os / inspect_get_roots structured blocks
-  // e.g. "    type: linux", "    distro: amazonlinux", "    fstab: [...]"
-  if (/^\s{4}\w[\w\s]*\w\s*:/.test(line)) return true;
-  return false;
-}
-
-/** Commands to omit entirely (noisy, run before every disk operation). */
-const NOISY_COMMANDS = ['udevadm'];
-
-function isNoisyCommand(name: string): boolean {
-  return NOISY_COMMANDS.includes(name);
-}
-
-/** Noisy stderr / interstitial lines that should stop stdout capture. */
-const NOISY_LINE_RE =
-  /^(?:No filesystem is currently mounted on|Failed to determine unit we run in|SELinux enabled state cached to|varlink:|udev:|udevadm:)/;
-
-/** Corrupted prefixes from interleaved concurrent process output. */
-const CORRUPTED_PREFIX_RE =
-  /^(?:gulibguestfs:|estfsd:|uestfsd:|stfsd:|glibguestfs:|guelibguestfs:|gueslibguestfs:|guestfsdlibguestfs:|tfsd:)/;
-
-function parseCommandArgs(argsStr: string): string[] {
-  if (!argsStr) return [];
-  // Split on spaces but respect quoted strings
-  const args: string[] = [];
-  const re = /'([^']*)'|"([^"]*)"|(\S+)/g;
-  let m;
-  while ((m = re.exec(argsStr)) !== null) {
-    args.push(m[1] ?? m[2] ?? m[3]);
-  }
-  return args;
-}
-
-/**
- * Extract the inline text content from a `v2v: write` log line.
- * Returns decoded text for script-like files (.bat, .ps1, .reg, .cmd, .txt, .xml),
- * or null for binary files (.exe, .msi, .sys, .dll, .cat, .pdb, etc.).
- *
- * Line format:
- *   libguestfs: trace: v2v: write "/path/file.bat" "escaped content"
- *   libguestfs: trace: v2v: write "/path/file.bat" "escaped..."<truncated, original size N bytes>
- */
-/**
- * Extract content from a `v2v: read_file = "content"` result line.
- * Returns decoded text, or null if it looks like binary.
- * Pattern: read_file = "content here"  or  "content"<truncated, original size N bytes>
- */
-function extractReadFileContent(line: string): string | null {
-  // Find the content after `read_file = "`
-  const marker = 'read_file = "';
-  const startIdx = line.indexOf(marker);
-  if (startIdx < 0) return null;
-  const contentStart = startIdx + marker.length;
-
-  // Find closing quote
-  let contentEnd = line.indexOf('"<truncated', contentStart);
-  if (contentEnd < 0) {
-    contentEnd = line.lastIndexOf('"');
-    if (contentEnd <= contentStart) return null;
-  }
-
-  const rawContent = line.substring(contentStart, contentEnd);
-
-  // Skip binary content — if it starts with non-printable escape sequences, it's binary
-  if (/^\\x[0-9a-f]{2}\\x[0-9a-f]{2}/i.test(rawContent) && !/^\\x[0-9a-f]{2}\\x0[0ad]/i.test(rawContent)) {
-    return null;
-  }
-
-  return decodeWriteEscapes(rawContent);
-}
-
-function extractWriteContent(line: string, destPath: string): string | null {
-  // Skip content extraction for known binary file extensions
-  const binaryExtensions = /\.(exe|msi|dll|sys|cat|pdb|cab|iso|img|bin|dat|drv)$/i;
-  if (binaryExtensions.test(destPath)) return null;
-
-  // Find the content between the second pair of quotes
-  // The first quoted string is the destination path, the second is the content
-  // Pattern: write "/dest" "content"  or  write "/dest" "content"<truncated...>
-  const idx = line.indexOf('" "');
-  if (idx < 0) return null;
-
-  // Content starts after '" "' (3 chars), so idx + 3
-  const contentStart = idx + 3;
-  // Find the closing quote — could be at end of line or before <truncated
-  let contentEnd = line.indexOf('"<truncated', contentStart);
-  if (contentEnd < 0) {
-    // No truncation — last quote on the line
-    contentEnd = line.lastIndexOf('"');
-    if (contentEnd <= contentStart) return null;
-  }
-
-  const rawContent = line.substring(contentStart, contentEnd);
-  return decodeWriteEscapes(rawContent);
-}
-
-/**
- * Decode libguestfs trace string escapes: \x0d\x0a → \r\n, \xHH → char, etc.
- */
-function decodeWriteEscapes(s: string): string {
-  let result = '';
-  let i = 0;
-  while (i < s.length) {
-    const esc = parseHexEscapeAt(s, i);
-    if (esc) {
-      result += String.fromCharCode(esc.byte);
-      i += esc.consumed;
-      continue;
-    }
-    if (s[i] === '\\' && i + 1 < s.length) {
-      const next = s[i + 1];
-      if (next === 'n') { result += '\n'; i += 2; continue; }
-      if (next === 'r') { result += '\r'; i += 2; continue; }
-      if (next === 't') { result += '\t'; i += 2; continue; }
-      if (next === '\\') { result += '\\'; i += 2; continue; }
-      if (next === '"') { result += '"'; i += 2; continue; }
-    }
-    result += s[i];
-    i++;
-  }
-  return result;
-}
-
-function isErrorFalsePositive(line: string): boolean {
-  for (const fp of ERROR_FALSE_POSITIVES) {
-    if (fp.test(line)) return true;
-  }
-  // nbdkit debug lines that mention "error" in VDDK timestamps
-  if (line.startsWith('nbdkit:') && line.includes('debug:')) return true;
-  return false;
-}
-
-/**
- * Parse libvirt XML captured from log lines into a V2VSourceVM structure.
- * Uses simple regex extraction — no XML parser needed for the few fields we care about.
- */
-function parseLibvirtXML(lines: string[]): V2VSourceVM {
-  const xml = lines.join('\n');
-  const vm: V2VSourceVM = { disks: [], networks: [] };
-
-  // VM name
-  const nameMatch = xml.match(/<name>([^<]+)<\/name>/);
-  if (nameMatch) vm.name = nameMatch[1];
-
-  // Memory (in KiB)
-  const memMatch = xml.match(/<memory\s+unit='KiB'>(\d+)<\/memory>/);
-  if (memMatch) vm.memoryKB = parseInt(memMatch[1], 10);
-
-  // vCPUs
-  const cpuMatch = xml.match(/<vcpu[^>]*>(\d+)<\/vcpu>/);
-  if (cpuMatch) vm.vcpus = parseInt(cpuMatch[1], 10);
-
-  // Firmware / OS type
-  const osTypeMatch = xml.match(/<os>[\s\S]*?<type[^>]*>([^<]+)<\/type>/);
-  if (osTypeMatch) vm.firmware = osTypeMatch[1];
-  if (xml.includes('<loader') || xml.includes('ovmf') || xml.includes('OVMF')) {
-    vm.firmware = 'uefi';
-  } else if (vm.firmware === 'hvm') {
-    vm.firmware = 'bios';
-  }
-
-  // Disks: <source file='...' or <source dev='...'
-  const diskRe = /<disk\s+[^>]*>[\s\S]*?<\/disk>/g;
-  let diskMatch;
-  while ((diskMatch = diskRe.exec(xml)) !== null) {
-    const block = diskMatch[0];
-    const srcFile = block.match(/<source\s+file='([^']+)'/)?.[1]
-      || block.match(/<source\s+dev='([^']+)'/)?.[1]
-      || block.match(/<source\s+name='([^']+)'/)?.[1];
-    const device = block.match(/<target\s+dev='([^']+)'/)?.[1];
-    const fmt = block.match(/<driver[^>]+type='([^']+)'/)?.[1];
-    if (srcFile) vm.disks.push({ path: srcFile, format: fmt, device });
-  }
-
-  // Networks: <interface type='...'> ... <source .../> <model type='...'/>
-  const netRe = /<interface\s+type='([^']+)'[^>]*>[\s\S]*?<\/interface>/g;
-  let netMatch;
-  while ((netMatch = netRe.exec(xml)) !== null) {
-    const block = netMatch[0];
-    const netType = netMatch[1];
-    const model = block.match(/<model\s+type='([^']+)'/)?.[1];
-    const source = block.match(/<source\s+(?:network|bridge|portgroup)='([^']+)'/)?.[1];
-    vm.networks.push({ type: netType, model, source });
-  }
-
-  return vm;
-}
-
-function extractSource(line: string): string {
-  if (line.startsWith('nbdkit:')) return 'nbdkit';
-  if (line.startsWith('libguestfs:')) return 'libguestfs';
-  if (line.startsWith('guestfsd:')) return 'guestfsd';
-  if (line.startsWith('supermin:')) return 'supermin';
-  if (line.startsWith('libnbd:')) return 'libnbd';
-  if (/^virt-v2v-in-place:/.test(line)) return 'virt-v2v-in-place';
-  if (/^virt-v2v-inspector:/.test(line)) return 'virt-v2v-inspector';
-  if (/^virt-v2v-customize:|^virt-customize:/.test(line)) return 'virt-v2v-customize';
-  if (/^virt-v2v:/.test(line)) return 'virt-v2v';
-  return 'unknown';
 }

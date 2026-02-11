@@ -1,6 +1,6 @@
 import yaml from 'js-yaml';
 import type { Plan, PlanSpec, VM, VMError, PhaseInfo, Condition, ParsedData, ParseStats, Summary, PhaseLogSummary, RawLogEntry, MigrationType, WarmInfo, PrecopyInfo } from '../types';
-import { PlanStatuses, MigrationTypes, PipelineSteps, phaseToStep } from './constants';
+import { PlanStatuses, MigrationTypes, PipelineSteps, Phases, ConditionStatus, phaseToStep } from './constants';
 import { formatDuration, groupLogs } from './utils';
 
 // Types for the raw YAML structures
@@ -146,6 +146,34 @@ export function isYamlContent(content: string): boolean {
  * Parse Plan YAML content and return structured data
  */
 export function parsePlanYaml(content: string): ParsedData {
+  try {
+    return parsePlanYamlImpl(content);
+  } catch (err) {
+    console.error('parsePlanYaml failed:', err);
+    return {
+      plans: [],
+      events: [],
+      stats: {
+        totalLines: content.split('\n').length,
+        parsedLines: 0,
+        errorLines: 0,
+        duplicateLines: 0,
+        plansFound: 0,
+        vmsFound: 0,
+      },
+      summary: {
+        totalPlans: 0,
+        running: 0,
+        succeeded: 0,
+        failed: 0,
+        archived: 0,
+        pending: 0,
+      },
+    };
+  }
+}
+
+function parsePlanYamlImpl(content: string): ParsedData {
   const docs = yaml.loadAll(content) as unknown[];
 
   const planResources: YamlPlanResource[] = [];
@@ -222,18 +250,18 @@ function convertPlanResource(resource: YamlPlanResource): Plan {
 
   let status = PlanStatuses.Pending as string;
   for (const cond of conditions) {
-    if (cond.type === 'Succeeded' && cond.status === 'True') {
+    if (cond.type === 'Succeeded' && cond.status === ConditionStatus.True) {
       status = PlanStatuses.Succeeded;
       break;
     }
-    if (cond.type === 'Failed' && cond.status === 'True') {
+    if (cond.type === 'Failed' && cond.status === ConditionStatus.True) {
       status = PlanStatuses.Failed;
       break;
     }
-    if (cond.type === 'Executing' && cond.status === 'True') {
+    if (cond.type === 'Executing' && cond.status === ConditionStatus.True) {
       status = PlanStatuses.Running;
     }
-    if (cond.type === 'Ready' && cond.status === 'True' && status === PlanStatuses.Pending) {
+    if (cond.type === 'Ready' && cond.status === ConditionStatus.True && status === PlanStatuses.Pending) {
       status = PlanStatuses.Ready;
     }
   }
@@ -252,7 +280,7 @@ function convertPlanResource(resource: YamlPlanResource): Plan {
       );
       // A VM is complete if it has a completed timestamp OR its phase is "Completed"
       const allCompleted = migrationVMs.every(
-        vm => !!vm.completed || vm.phase === 'Completed',
+        vm => !!vm.completed || vm.phase === Phases.Completed,
       );
 
       if (hasError) {

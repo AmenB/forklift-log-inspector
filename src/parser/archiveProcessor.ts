@@ -73,6 +73,19 @@ function isPlanYamlFile(entry: TarEntry): boolean {
  *   4. Merge and return
  */
 export async function processArchive(file: File): Promise<ArchiveResult> {
+  try {
+    return await processArchiveImpl(file);
+  } catch (err) {
+    console.error('processArchive failed:', err);
+    return {
+      logFiles: [],
+      yamlFiles: [],
+      parsedData: mergeResults(null, null),
+    };
+  }
+}
+
+async function processArchiveImpl(file: File): Promise<ArchiveResult> {
   // 1. Extract all files (handles nested tars/gzips)
   const entries = await extractArchive(file);
 
