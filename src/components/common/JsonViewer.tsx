@@ -66,6 +66,7 @@ export function JsonViewer({ json, className = '' }: JsonViewerProps) {
 /**
  * Format raw JSON string for display
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function formatRawJson(rawLine: string | undefined): string {
   if (!rawLine) return '';
   try {

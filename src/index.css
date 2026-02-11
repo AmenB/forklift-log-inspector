@@ -38,9 +38,13 @@
   --color-text-secondary: #a0a0a0;
   --color-accent: #e94560;
   --color-border: #2a2a4a;
+  --color-scrollbar-thumb: #475569;
+  --color-scrollbar-thumb-hover: #64748b;
+  --color-scrollbar-track: #16213e;
 }
 
-.light {
+.light,
+html:not(.dark) {
   --color-bg-primary: #ffffff;
   --color-bg-secondary: #f8fafc;
   --color-bg-tertiary: #e2e8f0;
@@ -48,6 +52,9 @@
   --color-text-secondary: #64748b;
   --color-accent: #e94560;
   --color-border: #e2e8f0;
+  --color-scrollbar-thumb: #94a3b8;
+  --color-scrollbar-thumb-hover: #64748b;
+  --color-scrollbar-track: #f1f5f9;
 }
 
 html {
@@ -154,16 +161,22 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg-secondary);
+  background: var(--color-scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: var(--color-scrollbar-thumb);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-secondary);
+  background: var(--color-scrollbar-thumb-hover);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
 }
 
 /* Visible scrollbar utility - ensures scrollbar is always visible */

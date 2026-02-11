@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from 'react';
 import { useStore, useShowKeyboardHelp, useEvents } from './store/useStore';
+import { useV2VStore } from './store/useV2VStore';
 import { ToastProvider } from './components/Toast';
 import { Header } from './components/Header';
 import { UploadZone } from './components/UploadZone';
@@ -7,6 +8,7 @@ import { StatsBar } from './components/StatsBar';
 import { SearchFilter } from './components/SearchFilter';
 import { PlansGrid } from './components/PlansGrid';
 import { EventTimeline } from './components/EventTimeline';
+import { V2VDashboard } from './components/v2v';
 import { Modal } from './components/common';
 import { useKeyboardShortcuts, KEYBOARD_SHORTCUTS } from './hooks';
 
@@ -42,6 +44,7 @@ function KeyboardShortcutsHelp() {
 function AppContent() {
   const { theme, plans, devMode, initializeTheme, toggleTheme, toggleDevMode, navigatePlan, toggleSelectedPlanExpanded, setShowKeyboardHelp, setSearchQuery } = useStore();
   const events = useEvents();
+  const v2vData = useV2VStore((s) => s.v2vData);
 
   // Initialize theme from system preference on first load
   useEffect(() => {
@@ -119,15 +122,21 @@ function AppContent() {
       <main className="flex-1">
         <UploadZone />
         
-        {plans.length > 0 && (
+        {v2vData ? (
+          <V2VDashboard />
+        ) : (
           <>
-            <StatsBar />
-            <SearchFilter />
+            {plans.length > 0 && (
+              <>
+                <StatsBar />
+                <SearchFilter />
+              </>
+            )}
+            
+            {events.length > 0 && <EventTimeline events={events} />}
+            <PlansGrid />
           </>
         )}
-        
-        {events.length > 0 && <EventTimeline events={events} />}
-        <PlansGrid />
       </main>
 
       <footer className="py-4 text-center text-sm text-slate-500 dark:text-gray-400 border-t border-slate-200 dark:border-slate-700">
