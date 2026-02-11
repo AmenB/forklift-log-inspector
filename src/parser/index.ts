@@ -5,3 +5,4 @@ export { processArchive } from './archiveProcessor';
 export { mergeResults } from './mergeResults';
 export * from './constants';
 export * from './utils';
+export { isV2VLog, parseV2VLog } from './v2vLogParser';

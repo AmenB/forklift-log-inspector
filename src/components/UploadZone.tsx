@@ -1,13 +1,14 @@
 import { useState, useCallback, useRef, DragEvent, ChangeEvent } from 'react';
 import { useStore } from '../store/useStore';
+import { useV2VStore } from '../store/useV2VStore';
 import { useToast } from './Toast';
-import { parseLogFile, parsePlanYaml, isYamlContent } from '../parser';
+import { parseLogFile, parsePlanYaml, isYamlContent, isV2VLog, parseV2VLog } from '../parser';
 import { processArchive } from '../parser/archiveProcessor';
 import { mergeResults } from '../parser/mergeResults';
 import type { ParsedData } from '../types';
 
 /** Extensions for plain text files handled directly */
-const PLAIN_EXTENSIONS = ['.log', '.txt', '.json', '.yaml', '.yml'];
+const PLAIN_EXTENSIONS = ['.log', '.logs', '.txt', '.json', '.yaml', '.yml'];
 
 /** Extensions that indicate a tar archive */
 const ARCHIVE_EXTENSIONS = ['.tar', '.tgz'];
@@ -45,7 +46,6 @@ function isYamlFile(name: string, content: string): boolean {
 export function UploadZone() {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [clearOnUpload, setClearOnUpload] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { setParseResult, clearData } = useStore();
   const { showToast } = useToast();
@@ -74,13 +74,13 @@ export function UploadZone() {
     setIsProcessing(true);
 
     try {
-      if (clearOnUpload) {
-        clearData();
-      }
+      clearData();
+      useV2VStore.getState().clearV2VData();
 
       // Accumulate all log content and YAML content across all files
       const logContents: string[] = [];
       const yamlContents: string[] = [];
+      const v2vContents: string[] = [];
       const archiveParsedResults: ParsedData[] = [];
       let archiveLogCount = 0;
       let archiveYamlCount = 0;
@@ -98,11 +98,39 @@ export function UploadZone() {
         } else {
           // ── Plain file ────────────────────────────────────────────
           const content = await file.text();
+
+          // NEW: detect v2v log and route to separate pipeline
+          if (isV2VLog(content)) {
+            v2vContents.push(content);
+            continue;
+          }
+
           if (isYamlFile(file.name, content)) {
             yamlContents.push(content);
           } else {
             logContents.push(content);
           }
+        }
+      }
+
+      // ── V2V logs: parse and store separately ────────────────────────
+      if (v2vContents.length > 0) {
+        const v2vResult = parseV2VLog(v2vContents.join('\n'));
+        // Attach the uploaded file name(s)
+        const v2vFileNames = valid.filter(f => !isArchiveFile(f.name)).map(f => f.name);
+        v2vResult.fileName = v2vFileNames.join(', ');
+        useV2VStore.getState().setV2VData(v2vResult);
+
+        const stageCount = v2vResult.toolRuns.reduce((sum, r) => sum + r.stages.length, 0);
+        const errorCount = v2vResult.toolRuns.reduce((sum, r) => sum + r.errors.filter(e => e.level === 'error').length, 0);
+        showToast(
+          `Processed ${v2vContents.length} v2v log file${v2vContents.length !== 1 ? 's' : ''}: ${v2vResult.toolRuns.length} tool run${v2vResult.toolRuns.length !== 1 ? 's' : ''}, ${stageCount} stages, ${errorCount} error${errorCount !== 1 ? 's' : ''}`,
+          'success',
+        );
+
+        // If only v2v files were uploaded, skip the forklift processing below
+        if (logContents.length === 0 && yamlContents.length === 0 && archiveParsedResults.length === 0) {
+          return;
         }
       }
 
@@ -161,7 +189,7 @@ export function UploadZone() {
     } finally {
       setIsProcessing(false);
     }
-  }, [clearOnUpload, clearData, setParseResult, showToast]);
+  }, [clearData, setParseResult, showToast]);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -220,7 +248,7 @@ export function UploadZone() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".log,.txt,.json,.yaml,.yml,.tar,.tar.gz,.tgz"
+          accept=".log,.logs,.txt,.json,.yaml,.yml,.tar,.tar.gz,.tgz"
           onChange={handleFileInputChange}
           className="hidden"
         />
@@ -249,28 +277,15 @@ export function UploadZone() {
               Drop your files here, or click to browse
             </p>
             <p className="text-slate-500 dark:text-gray-400 text-sm">
-              Upload logs, Plan YAMLs, and archives together to combine them
+              Upload forklift logs, virt-v2v/inspector logs, Plan YAMLs, and archives
             </p>
             <p className="text-slate-500 dark:text-gray-400 text-xs mt-1">
-              .log, .txt, .json, .yaml, .yml, .tar, .tar.gz, .tgz
+              .log, .logs, .txt, .json, .yaml, .yml, .tar, .tar.gz, .tgz
             </p>
           </>
         )}
       </div>
 
-      <div className="mt-3 flex items-center justify-center">
-        <label className="flex items-center gap-2 text-sm text-slate-500 dark:text-gray-400 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={clearOnUpload}
-            onChange={(e) => setClearOnUpload(e.target.checked)}
-            className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700
-                       checked:bg-pink-500 checked:border-pink-500
-                       focus:ring-2 focus:ring-pink-500 focus:ring-offset-0"
-          />
-          Clear existing data on upload
-        </label>
-      </div>
     </div>
   );
 }
