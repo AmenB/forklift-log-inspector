@@ -428,6 +428,7 @@ function parseToolRunSection(
     session.pendingGetValueName = null;
     session.pendingChildName = null;
     session.pendingChildParent = null;
+    session.failedChild = null;
     session.hasWriteOp = overrides?.hasWriteOp ?? false;
     session.firstWriteLine = overrides?.firstWriteLine ?? 0;
     if (overrides?.lineNumber !== undefined) {
@@ -687,14 +688,17 @@ function parseToolRunSection(
           flushHivexSession(currentHivexSession, registryHiveAccesses);
           const hiveMatch = apiArgs.match(/^"([^"]+)"/);
           if (hiveMatch) {
+            const openMode = apiArgs.includes('write:true') ? 'write' as const : 'read' as const;
             currentHivexSession = {
               hivePath: hiveMatch[1],
-              mode: apiArgs.includes('write:true') ? 'write' : 'read',
+              mode: openMode,
+              openMode,
               keySegments: [],
               values: [],
               pendingGetValueName: null,
               pendingChildName: null,
               pendingChildParent: null,
+              failedChild: null,
               lineNumber: globalLine,
               rootHandle: '',
               hasWriteOp: false,
@@ -723,6 +727,9 @@ function parseToolRunSection(
             const resultVal = apiArgs.slice(2).trim();
             if (resultVal !== '0' && currentHivexSession.pendingChildName) {
               currentHivexSession.keySegments.push(currentHivexSession.pendingChildName);
+            } else if (resultVal === '0' && currentHivexSession.pendingChildName) {
+              // Child not found — record the failed lookup
+              currentHivexSession.failedChild = currentHivexSession.pendingChildName;
             }
             // Either way, clear the pending state
             currentHivexSession.pendingChildName = null;
@@ -758,6 +765,11 @@ function parseToolRunSection(
                 firstWriteLine: globalLine,
                 lineNumber: globalLine,
               });
+            }
+            // Clear failedChild if the added child matches the failed lookup
+            // (get_child returned 0 → add_child creates it)
+            if (currentHivexSession.failedChild === childName) {
+              currentHivexSession.failedChild = null;
             }
             currentHivexSession.keySegments.push(childName);
           }

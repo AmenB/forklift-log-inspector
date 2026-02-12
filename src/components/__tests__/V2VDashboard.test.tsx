@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { V2VDashboard } from '../v2v/V2VDashboard';
 import { useV2VStore } from '../../store/useV2VStore';
 import type { V2VParsedData, V2VToolRun } from '../../types/v2v';
@@ -44,15 +44,11 @@ describe('V2VDashboard', () => {
     expect(container).toBeTruthy();
   });
 
-  it('Clear button clears V2V data when clicked', () => {
+  it('renders dashboard content when data is loaded', () => {
     useV2VStore.getState().setV2VData(minimalV2VData);
     render(<V2VDashboard />);
 
     expect(useV2VStore.getState().v2vData).not.toBeNull();
-
-    const clearButtons = screen.getAllByRole('button', { name: /clear v2v log data/i });
-    fireEvent.click(clearButtons[0]);
-
-    expect(useV2VStore.getState().v2vData).toBeNull();
+    expect(screen.getAllByText(/V2V Log Analysis/i).length).toBeGreaterThan(0);
   });
 });

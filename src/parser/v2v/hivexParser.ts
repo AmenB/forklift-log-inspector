@@ -9,6 +9,8 @@ import type { V2VRegistryHiveAccess } from '../../types/v2v';
 export interface HivexSessionState {
   hivePath: string;
   mode: 'read' | 'write';
+  /** The mode the hive was originally opened with */
+  openMode: 'read' | 'write';
   keySegments: string[];
   values: { name: string; value: string; lineNumber: number }[];
   pendingGetValueName: string | null;
@@ -16,6 +18,8 @@ export interface HivexSessionState {
   pendingChildName: string | null;
   /** Parent handle for the pending child (for root-detection) */
   pendingChildParent: string | null;
+  /** Child key name that was looked up but not found (result = 0) */
+  failedChild: string | null;
   lineNumber: number;
   rootHandle: string;
   hasWriteOp: boolean;
@@ -73,7 +77,9 @@ export function flushHivexSession(
   accesses.push({
     hivePath: session.hivePath,
     mode: actualMode,
+    openMode: session.openMode,
     keyPath,
+    failedChild: session.failedChild || undefined,
     values: session.values,
     lineNumber,
   });

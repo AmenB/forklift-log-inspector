@@ -20,7 +20,7 @@ const TOOL_LABELS: Record<string, string> = {
 export function V2VDashboard() {
   const v2vData = useV2VStore((s) => s.v2vData);
   const selectedToolRun = useV2VStore((s) => s.selectedToolRun);
-  const { setSelectedToolRun, clearV2VData } = useV2VStore();
+  const { setSelectedToolRun } = useV2VStore();
   const devMode = useDevMode();
 
   const currentRun = useMemo(() => {
@@ -88,14 +88,6 @@ export function V2VDashboard() {
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={clearV2VData}
-          className="text-sm text-slate-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
-          aria-label="Clear V2V log data"
-        >
-          Clear
-        </button>
       </div>
 
       {/* Tool run tabs */}

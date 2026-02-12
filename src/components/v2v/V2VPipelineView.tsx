@@ -533,7 +533,10 @@ function StageContentModal({
                   ? entry.render({ content, stageName, toolRun, stageStartLine, stageEndLine })
                   : <FileWritesView content={content} />;
               })()}
-              <StageWarnings content={content} />
+              {/* Stage warnings (skip for Windows conversion which has its own) */}
+              {!isWindowsConversionStage(stageName, content) && (
+                <StageWarnings content={content} />
+              )}
               {/* Per-stage file operations tree (skip for conversion stages that have their own) */}
               {!isConversionStage && (
                 <StageFileOpsTree apiCalls={stageApiCalls} fileCopies={stageFileCopies} />

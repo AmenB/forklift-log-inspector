@@ -14,6 +14,8 @@ export interface HiveGroup {
   accesses: {
     keyPath: string;
     mode: 'read' | 'write';
+    openMode: 'read' | 'write';
+    failedChild?: string;
     values: V2VHivexValueOp[];
     lineNumber: number;
   }[];
@@ -35,6 +37,8 @@ export function groupHiveAccesses(hiveAccesses: V2VRegistryHiveAccess[]): HiveGr
     group.accesses.push({
       keyPath: access.keyPath,
       mode: access.mode,
+      openMode: access.openMode,
+      failedChild: access.failedChild,
       values: access.values,
       lineNumber: access.lineNumber,
     });
@@ -253,6 +257,8 @@ function KeyPathRow({ access }: {
   access: {
     keyPath: string;
     mode: 'read' | 'write';
+    openMode: 'read' | 'write';
+    failedChild?: string;
     values: V2VHivexValueOp[];
     lineNumber: number;
   };
@@ -260,6 +266,8 @@ function KeyPathRow({ access }: {
   const isWrite = access.mode === 'write';
   const hasValues = access.values.length > 0;
   const [showValues, setShowValues] = useState(false);
+  // Show the open mode if it differs from the effective mode (e.g. opened write but only read)
+  const showOpenMode = access.openMode !== access.mode;
 
   return (
     <div className={isWrite ? 'bg-orange-50/40 dark:bg-orange-900/5' : ''}>
@@ -287,6 +295,13 @@ function KeyPathRow({ access }: {
           </span>
         )}
 
+        {/* Open mode hint when it differs from effective mode */}
+        {showOpenMode && (
+          <span className="flex-shrink-0 text-[9px] italic text-slate-400 dark:text-gray-500" title={`Hive opened as ${access.openMode} but no ${access.openMode === 'write' ? 'writes' : 'reads'} performed`}>
+            (opened {access.openMode})
+          </span>
+        )}
+
         {/* Key path */}
         <span className={`font-mono truncate flex-1 min-w-0 ${
           isWrite
@@ -294,6 +309,13 @@ function KeyPathRow({ access }: {
             : 'text-slate-700 dark:text-gray-300'
         }`}>
           {access.keyPath || <span className="italic text-slate-400 dark:text-gray-500">(root)</span>}
+          {/* Failed child lookup */}
+          {access.failedChild && (
+            <>
+              \<span className="text-red-500 dark:text-red-400 line-through">{access.failedChild}</span>
+              <span className="text-red-400 dark:text-red-500 text-[9px] ml-1">not found</span>
+            </>
+          )}
         </span>
 
         {/* Value count badge */}

@@ -177,8 +177,12 @@ export interface V2VHivexValueOp {
 export interface V2VRegistryHiveAccess {
   hivePath: string;
   mode: 'read' | 'write';
+  /** The mode the hive was originally opened with (may differ from effective `mode`) */
+  openMode: 'read' | 'write';
   /** Registry key path navigated via hivex_node_get_child (e.g. Microsoft\Windows\CurrentVersion\Uninstall) */
   keyPath: string;
+  /** Child key name that was looked up but not found (hivex_node_get_child returned 0) */
+  failedChild?: string;
   /** Values read or written during this key path traversal */
   values: V2VHivexValueOp[];
   lineNumber: number;
