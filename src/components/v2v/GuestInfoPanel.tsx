@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import type { V2VGuestInfo, V2VSourceVM, V2VInstalledApp } from '../../types/v2v';
 import { formatMemory } from '../../utils/format';
 import { InfoTag } from './shared';
+import { ExpandArrow } from '../common';
 
 interface GuestInfoPanelProps {
   info?: V2VGuestInfo | null;
@@ -183,6 +184,11 @@ export function GuestInfoPanel({ info, sourceVM, apps = [] }: GuestInfoPanelProp
         </div>
       )}
 
+      {/* Block Device Info (blkid) */}
+      {info && info.blkid && info.blkid.length > 0 && (
+        <BlkidSection entries={info.blkid} />
+      )}
+
       {/* Installed Applications — collapsible, hidden by default */}
       {apps.length > 0 && (
         <InstalledAppsSection
@@ -288,9 +294,7 @@ function AppRow({ app }: { app: V2VInstalledApp }) {
         <td className="px-3 py-1.5 text-slate-800 dark:text-gray-200">
           <div className="flex items-center gap-1.5">
             {hasDetails && (
-              <span className="text-[8px] text-slate-400 flex-shrink-0">
-                {expanded ? '▼' : '▶'}
-              </span>
+              <ExpandArrow expanded={expanded} className="text-[8px] text-slate-400 flex-shrink-0" />
             )}
             <span className="truncate">{displayName}</span>
           </div>
@@ -355,4 +359,70 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
   );
 }
 
+function BlkidSection({ entries }: { entries: import('../../types/v2v').V2VBlkidEntry[] }) {
+  const [open, setOpen] = useState(false);
 
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-gray-400 hover:text-slate-800 dark:hover:text-gray-200 transition-colors uppercase tracking-wider font-semibold mb-1.5"
+      >
+        <ExpandArrow expanded={open} className="text-[9px]" />
+        Block Devices (blkid)
+        <span className="text-[10px] font-normal text-slate-400 dark:text-gray-500">
+          ({entries.length})
+        </span>
+      </button>
+      {open && (
+        <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-left text-slate-400 dark:text-gray-500 border-b border-slate-100 dark:border-slate-800">
+                <th className="px-3 py-1 font-medium">Device</th>
+                <th className="px-3 py-1 font-medium">Type</th>
+                <th className="px-3 py-1 font-medium">Label</th>
+                <th className="px-3 py-1 font-medium">UUID</th>
+                <th className="px-3 py-1 font-medium">PARTUUID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e) => (
+                <tr key={e.device} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                  <td className="px-3 py-1.5 font-mono text-slate-700 dark:text-gray-300">
+                    {e.device}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    {e.type ? (
+                      <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
+                        e.type === 'ntfs' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300'
+                        : e.type === 'vfat' || e.type === 'fat32' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300'
+                        : e.type === 'ext4' || e.type === 'ext3' || e.type === 'ext2' ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                        : e.type === 'xfs' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                        : e.type === 'swap' ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-gray-300'
+                      }`}>
+                        {e.type}
+                      </span>
+                    ) : (
+                      <span className="text-slate-300 dark:text-gray-600">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5 text-slate-500 dark:text-gray-400">
+                    {e.partLabel || e.label || '—'}
+                  </td>
+                  <td className="px-3 py-1.5 font-mono text-[10px] text-slate-500 dark:text-gray-400 truncate max-w-[180px]" title={e.uuid}>
+                    {e.uuid || '—'}
+                  </td>
+                  <td className="px-3 py-1.5 font-mono text-[10px] text-slate-500 dark:text-gray-400 truncate max-w-[180px]" title={e.partUuid}>
+                    {e.partUuid || '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

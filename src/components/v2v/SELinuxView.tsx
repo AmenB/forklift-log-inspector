@@ -5,6 +5,7 @@
  * setfiles execution details, and the relabelled files summary.
  */
 import { useMemo, useState } from 'react';
+import { ExpandArrow } from '../common';
 import type {
   SELinuxConfig,
   AugeasError,
@@ -435,9 +436,7 @@ function RelabelTreeNodeRow({ node, depth }: { node: RelabelTreeNode; depth: num
       >
         {/* Expand arrow (dirs only) */}
         {isDir ? (
-          <span className="text-[9px] text-indigo-500 dark:text-indigo-400 w-3 text-center flex-shrink-0">
-            {expanded ? '\u25BC' : '\u25B6'}
-          </span>
+          <ExpandArrow expanded={expanded} className="text-[9px] text-indigo-500 dark:text-indigo-400 w-3 text-center flex-shrink-0" />
         ) : (
           <span className="w-3 flex-shrink-0" />
         )}

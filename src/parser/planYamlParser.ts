@@ -533,6 +533,7 @@ function convertVMStatus(yamlVM: YamlVMStatus, planMigrationType: MigrationType)
     currentPhase,
     currentStep,
     migrationType: planMigrationType,
+    transferMethod: 'Unknown',
     phaseHistory,
     dataVolumes: [],
     createdResources: [],

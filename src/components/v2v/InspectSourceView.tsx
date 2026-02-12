@@ -8,6 +8,7 @@
  *  4. OS detection summary (i_root, i_type, etc.)
  */
 import { useMemo, useState } from 'react';
+import { ExpandArrow } from '../common';
 import type {
   DiskInfo,
   FilesystemEntry,
@@ -406,7 +407,7 @@ function FsckResultCard({ result: r }: { result: FsckResult }) {
         } transition-colors`}
       >
         {hasDetails && (
-          <span className="text-[9px] text-slate-400 dark:text-gray-500">{expanded ? '▼' : '▶'}</span>
+          <ExpandArrow expanded={expanded} className="text-[9px] text-slate-400 dark:text-gray-500" />
         )}
         <span className="text-sm">{passed ? '\u2705' : '\u274C'}</span>
         <span className="font-mono text-[11px] font-medium text-slate-700 dark:text-gray-200">

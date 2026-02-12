@@ -7,6 +7,7 @@ import type {
   V2VGuestInfo,
   V2VDriveMapping,
   V2VFstabEntry,
+  V2VBlkidEntry,
   V2VInstalledApp,
   V2VSourceVM,
 } from '../../types/v2v';
@@ -170,7 +171,42 @@ export function buildGuestInfo(raw: Map<string, string>): V2VGuestInfo {
     windowsCurrentControlSet: raw.get('windows_current_control_set') || '',
     driveMappings,
     fstab,
+    blkid: [],
   };
+}
+
+/**
+ * Parse a blkid output line into a V2VBlkidEntry.
+ *
+ * Format: `/dev/sda1: UUID="B2A8-041F" TYPE="vfat" PARTLABEL="Basic data partition" PARTUUID="7c1f7103-..."`
+ */
+const BLKID_LINE_RE = /^(\/dev\/\S+):\s+(.+)$/;
+const BLKID_KV_RE = /(\w+)="([^"]*)"/g;
+
+export function parseBlkidLine(line: string): V2VBlkidEntry | null {
+  const m = line.match(BLKID_LINE_RE);
+  if (!m) return null;
+
+  const device = m[1];
+  const kvPart = m[2];
+
+  // Verify it actually has blkid-style KEY="value" pairs
+  const kvMatches = [...kvPart.matchAll(BLKID_KV_RE)];
+  if (kvMatches.length === 0) return null;
+
+  const entry: V2VBlkidEntry = { device };
+  for (const kv of kvMatches) {
+    const key = kv[1].toUpperCase();
+    const val = kv[2];
+    switch (key) {
+      case 'UUID': entry.uuid = val; break;
+      case 'TYPE': entry.type = val; break;
+      case 'PARTLABEL': entry.partLabel = val; break;
+      case 'PARTUUID': entry.partUuid = val; break;
+      case 'LABEL': entry.label = val; break;
+    }
+  }
+  return entry;
 }
 
 /**

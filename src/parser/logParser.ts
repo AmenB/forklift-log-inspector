@@ -40,7 +40,14 @@ export function parseLogFile(content: string): ParsedData {
     // Try to parse as JSON
     let entry: LogEntry;
     try {
-      entry = JSON.parse(jsonContent);
+      const parsed = JSON.parse(jsonContent);
+      // JSON.parse can return primitives (numbers, strings, booleans, null).
+      // We only care about object log entries.
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        store.incrementStat('errorLines');
+        continue;
+      }
+      entry = parsed;
     } catch {
       // Non-JSON line - could be part of panic stack trace
       if (inPanicStacktrace || isPanicLine(line)) {

@@ -118,6 +118,16 @@ export interface V2VFstabEntry {
   mountpoint: string;
 }
 
+/** Block device info from blkid output */
+export interface V2VBlkidEntry {
+  device: string;
+  uuid?: string;
+  type?: string;
+  partLabel?: string;
+  partUuid?: string;
+  label?: string;
+}
+
 /** Guest OS information extracted from inspection */
 export interface V2VGuestInfo {
   root: string;
@@ -139,6 +149,7 @@ export interface V2VGuestInfo {
   windowsCurrentControlSet: string;
   driveMappings: V2VDriveMapping[];
   fstab: V2VFstabEntry[];
+  blkid: V2VBlkidEntry[];
 }
 
 /** An installed application detected in the guest OS (from inspect_list_applications2) */

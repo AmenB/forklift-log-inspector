@@ -5,6 +5,7 @@
  * initramfs rebuild, GRUB config, guest capabilities, and augeas errors.
  */
 import { useMemo, useState } from 'react';
+import { ExpandArrow } from '../common';
 import type {
   KernelInfo,
   PackageOperation,
@@ -23,8 +24,29 @@ export { isLinuxConversionContent };
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function LinuxConversionView({ content, toolRun }: { content: string[]; toolRun?: V2VToolRun }) {
+export function LinuxConversionView({
+  content,
+  toolRun,
+  stageStartLine,
+  stageEndLine,
+}: {
+  content: string[];
+  toolRun?: V2VToolRun;
+  stageStartLine?: number;
+  stageEndLine?: number;
+}) {
   const parsed = useMemo(() => parseLinuxConversion(content), [content]);
+
+  // Filter API calls and file copies to this stage's line range when available
+  const stageApiCalls = useMemo(() => {
+    if (!toolRun || stageStartLine === undefined || stageEndLine === undefined) return toolRun?.apiCalls ?? [];
+    return toolRun.apiCalls.filter((c) => c.lineNumber >= stageStartLine && c.lineNumber < stageEndLine);
+  }, [toolRun, stageStartLine, stageEndLine]);
+
+  const stageFileCopies = useMemo(() => {
+    if (!toolRun || stageStartLine === undefined || stageEndLine === undefined) return toolRun?.virtioWin.fileCopies ?? [];
+    return toolRun.virtioWin.fileCopies.filter((fc) => fc.lineNumber >= stageStartLine && fc.lineNumber < stageEndLine);
+  }, [toolRun, stageStartLine, stageEndLine]);
 
   const hasData =
     parsed.conversionModule ||
@@ -37,9 +59,9 @@ export function LinuxConversionView({ content, toolRun }: { content: string[]; t
 
   // Determine if V2VFileTree has data to show
   const hasFileTreeData = toolRun && (
-    toolRun.apiCalls.some((c) =>
+    stageApiCalls.some((c) =>
       ['is_file', 'is_dir', 'is_symlink', 'is_blockdev', 'is_chardev', 'exists', 'stat', 'lstat'].includes(c.name),
-    ) || toolRun.virtioWin.fileCopies.length > 0
+    ) || stageFileCopies.length > 0
   );
 
   return (
@@ -69,25 +91,24 @@ export function LinuxConversionView({ content, toolRun }: { content: string[]; t
         <InitramfsSection initramfs={parsed.initramfs} />
       )}
 
-      {/* Augeas Errors */}
-      {parsed.augeasErrors.length > 0 && (
-        <AugeasErrorsSection errors={parsed.augeasErrors} />
-      )}
-
-      {/* File Operations — V2VFileTree with mounted disks */}
+      {/* File Operations — V2VFileTree with mounted disks (filtered to this stage) */}
       {hasFileTreeData && toolRun && (
         <div>
           <SectionHeader title="File Operations" />
           <V2VFileTree
-            apiCalls={toolRun.apiCalls}
-            fileCopies={toolRun.virtioWin.fileCopies}
+            apiCalls={stageApiCalls}
+            fileCopies={stageFileCopies}
             driveMappings={toolRun.guestInfo?.driveMappings}
             fstab={toolRun.guestInfo?.fstab}
-            guestType={toolRun.guestInfo?.type}
             virtioWinIsoPath={toolRun.virtioWin?.isoPath}
             defaultExpandGuest
           />
         </div>
+      )}
+
+      {/* Augeas Errors */}
+      {parsed.augeasErrors.length > 0 && (
+        <AugeasErrorsSection errors={parsed.augeasErrors} />
       )}
     </div>
   );
@@ -378,7 +399,7 @@ function BootConfigSection({
               onClick={() => setShowEfi(!showEfi)}
               className="text-slate-500 dark:text-gray-400 hover:text-slate-700 dark:hover:text-gray-200 transition-colors"
             >
-              <span className="text-[9px] mr-1">{showEfi ? '\u25BC' : '\u25B6'}</span>
+              <ExpandArrow expanded={showEfi} className="text-[9px] mr-1" />
               EFI files ({boot.efiFiles.length})
             </button>
             {showEfi && (
@@ -448,7 +469,7 @@ function CollapsibleList({
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 text-slate-500 dark:text-gray-400 hover:text-slate-700 dark:hover:text-gray-200 transition-colors"
       >
-        <span className="text-[9px]">{open ? '\u25BC' : '\u25B6'}</span>
+        <ExpandArrow expanded={open} className="text-[9px]" />
         <span>{label}</span>
         <Badge color={badgeColor}>{count}</Badge>
       </button>
@@ -460,7 +481,7 @@ function CollapsibleList({
                 onClick={() => setExpandedGroup(expandedGroup === group ? null : group)}
                 className="flex items-center gap-1 text-slate-600 dark:text-gray-300 hover:text-slate-800 dark:hover:text-gray-100 transition-colors"
               >
-                <span className="text-[8px]">{expandedGroup === group ? '\u25BC' : '\u25B6'}</span>
+                <ExpandArrow expanded={expandedGroup === group} className="text-[8px]" />
                 <span className="font-mono text-[10px] text-blue-600 dark:text-blue-400">{group}/</span>
                 <span className="text-[9px] text-slate-400 dark:text-gray-500">({mods.length})</span>
               </button>
@@ -641,7 +662,7 @@ function AugeasErrorsSection({ errors }: { errors: LinuxAugeasError[] }) {
           className="w-full px-3 py-1.5 flex items-center justify-between bg-amber-50 dark:bg-amber-900/10 text-[11px] text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/20 transition-colors"
         >
           <span>
-            <span className="text-[9px] mr-1">{expanded ? '\u25BC' : '\u25B6'}</span>
+            <ExpandArrow expanded={expanded} className="text-[9px] mr-1" />
             {errors.length} file{errors.length !== 1 ? 's' : ''} failed to parse
           </span>
         </button>

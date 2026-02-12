@@ -6,6 +6,7 @@
  */
 import { useMemo, useState } from 'react';
 import { SectionHeader } from './shared';
+import { ExpandArrow } from '../common';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -230,7 +231,7 @@ function VddkStatTableCard({ table, index, total }: { table: VddkStatTable; inde
         className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-800/80 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/90 transition-colors"
       >
         <div className="flex items-center gap-2">
-          <span className="text-[9px] text-slate-400 dark:text-gray-500">{expanded ? '▼' : '▶'}</span>
+          <ExpandArrow expanded={expanded} className="text-[9px] text-slate-400 dark:text-gray-500" />
           <span className="text-[11px] font-medium text-slate-700 dark:text-gray-200">
             {total > 1 ? `Disk ${index + 1}` : 'VDDK Calls'}
           </span>

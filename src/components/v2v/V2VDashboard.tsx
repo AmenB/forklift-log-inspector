@@ -89,8 +89,10 @@ export function V2VDashboard() {
           )}
         </div>
         <button
+          type="button"
           onClick={clearV2VData}
           className="text-sm text-slate-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+          aria-label="Clear V2V log data"
         >
           Clear
         </button>
@@ -204,7 +206,6 @@ export function V2VDashboard() {
             fileCopies={currentRun.virtioWin.fileCopies}
             driveMappings={sharedGuestInfo.guestInfo?.driveMappings}
             fstab={sharedGuestInfo.guestInfo?.fstab}
-            guestType={sharedGuestInfo.guestInfo?.type}
             virtioWinIsoPath={currentRun.virtioWin?.isoPath}
           />
         </CollapsibleSection>

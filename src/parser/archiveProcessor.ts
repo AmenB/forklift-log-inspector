@@ -9,9 +9,11 @@
 
 import type { TarEntry } from './tarExtractor';
 import type { ParsedData, ArchiveResult } from '../types';
+import type { V2VParsedData } from '../types/v2v';
 import { extractArchive } from './tarExtractor';
 import { parseLogFile } from './logParser';
 import { parsePlanYaml } from './planYamlParser';
+import { isV2VLog, parseV2VLog } from './v2vLogParser';
 import { mergeResults } from './mergeResults';
 
 export type { ArchiveResult };
@@ -80,6 +82,7 @@ export async function processArchive(file: File): Promise<ArchiveResult> {
     return {
       logFiles: [],
       yamlFiles: [],
+      v2vFiles: [],
       parsedData: mergeResults(null, null),
     };
   }
@@ -92,18 +95,22 @@ async function processArchiveImpl(file: File): Promise<ArchiveResult> {
   // 2. Classify
   const logEntries: TarEntry[] = [];
   const yamlEntries: TarEntry[] = [];
+  const v2vEntries: TarEntry[] = [];
 
   for (const entry of entries) {
     if (isForkliftLogFile(entry)) {
       logEntries.push(entry);
     } else if (isPlanYamlFile(entry)) {
       yamlEntries.push(entry);
+    } else if (isV2VLog(entry.content)) {
+      v2vEntries.push(entry);
     }
   }
 
   // 3. Parse each category
   let logResult: ParsedData | null = null;
   let yamlResult: ParsedData | null = null;
+  let v2vData: V2VParsedData | undefined;
 
   if (logEntries.length > 0) {
     const combined = logEntries.map((e) => e.content).join('\n');
@@ -115,12 +122,20 @@ async function processArchiveImpl(file: File): Promise<ArchiveResult> {
     yamlResult = parsePlanYaml(combined);
   }
 
+  if (v2vEntries.length > 0) {
+    const combined = v2vEntries.map((e) => e.content).join('\n');
+    v2vData = parseV2VLog(combined);
+    v2vData.fileName = v2vEntries.map((e) => e.path).join(', ');
+  }
+
   // 4. Merge
   const parsedData = mergeResults(logResult, yamlResult);
 
   return {
     logFiles: logEntries.map((e) => e.path),
     yamlFiles: yamlEntries.map((e) => e.path),
+    v2vFiles: v2vEntries.map((e) => e.path),
     parsedData,
+    v2vData,
   };
 }

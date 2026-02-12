@@ -6,10 +6,12 @@ import { JsonViewer, StackTraceView, CopyButton } from './common';
 interface ErrorSectionProps {
   errors: ErrorEntry[];
   panics: PanicEntry[];
+  /** Whether the section starts expanded. Defaults to true. */
+  defaultOpen?: boolean;
 }
 
-export function ErrorSection({ errors, panics }: ErrorSectionProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+export function ErrorSection({ errors, panics, defaultOpen = true }: ErrorSectionProps) {
+  const [isExpanded, setIsExpanded] = useState(defaultOpen);
 
   // Count errors vs warnings for display (hooks must be called before early returns)
   const errorCount = useMemo(() => errors.filter(e => e.level === 'error').length, [errors]);

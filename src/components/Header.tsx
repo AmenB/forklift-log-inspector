@@ -1,7 +1,14 @@
 import { useStore } from '../store/useStore';
+import { useV2VStore } from '../store/useV2VStore';
 
 export function Header() {
   const { theme, toggleTheme, clearData } = useStore();
+  const clearV2VData = useV2VStore((s) => s.clearV2VData);
+
+  const handleClearData = () => {
+    clearData();
+    clearV2VData();
+  };
 
   return (
     <header className="bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-6 py-4">
@@ -51,7 +58,7 @@ export function Header() {
           </button>
 
           <button
-            onClick={clearData}
+            onClick={handleClearData}
             aria-label="Clear all loaded data"
             className="px-4 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors text-slate-700 dark:text-gray-100 flex items-center gap-2 font-medium"
           >

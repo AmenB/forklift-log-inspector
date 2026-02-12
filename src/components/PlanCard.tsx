@@ -47,6 +47,11 @@ export function PlanCard({ plan }: PlanCardProps) {
   const hasPanics = plan.panics.length > 0;
   const hasErrors = plan.errors.some((e) => e.level === 'error');
 
+  const hasStorageOffload = useMemo(
+    () => vms.some((vm) => vm.transferMethod === 'StorageOffload'),
+    [vms],
+  );
+
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
       {/* Plan Header */}
@@ -90,6 +95,12 @@ export function PlanCard({ plan }: PlanCardProps) {
           {plan.migrationType !== 'Unknown' && (
             <span className="px-2 py-1 rounded text-xs bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400">
               {plan.migrationType}
+            </span>
+          )}
+
+          {hasStorageOffload && (
+            <span className="px-2 py-1 rounded text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400">
+              Storage Offload
             </span>
           )}
 
@@ -228,8 +239,8 @@ export function PlanCard({ plan }: PlanCardProps) {
             <SchedulerView scheduleHistory={plan.scheduleHistory} />
           )}
 
-          {/* Errors and Panics */}
-          <ErrorSection errors={plan.errors} panics={plan.panics} />
+          {/* Errors and Panics — collapsed by default when plan succeeds */}
+          <ErrorSection errors={plan.errors} panics={plan.panics} defaultOpen={plan.status === 'Failed'} />
 
           {/* VMs */}
           {vms.length > 0 && (

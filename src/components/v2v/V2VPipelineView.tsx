@@ -1,7 +1,9 @@
-import { useMemo, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef, memo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { V2VToolRun, V2VDiskProgress, V2VHostCommand } from '../../types/v2v';
 import { LineLink, LineLinkNavigateContext } from './LineLink';
+import { StageFileOpsTree } from './V2VFileTree';
+import { groupHiveAccesses, HiveGroupCard } from './RegistryAppsPanel';
 import { formatDuration } from '../../utils/format';
 import { InspectSourceView } from './InspectSourceView';
 import { OpenSourceView } from './OpenSourceView';
@@ -34,6 +36,8 @@ interface EnrichedStage {
   content: string[] | null;
   /** Host commands executed during this stage */
   hostCommands: V2VHostCommand[];
+  /** True if errors occurred during this stage (by line range or exit status) */
+  hasErrors: boolean;
 }
 
 export function V2VPipelineView({ toolRun }: V2VPipelineViewProps) {
@@ -87,9 +91,14 @@ export function V2VPipelineView({ toolRun }: V2VPipelineViewProps) {
         (cmd) => cmd.lineNumber >= stageStartLine && cmd.lineNumber < stageEndLine,
       );
 
-      return { ...stage, durationSeconds, progress, content, hostCommands: stageHostCmds };
+      // Mark the last stage as failed only when v2v actually exited with an error
+      const isLastStage = idx === stages.length - 1;
+      const hasErrors = isStageError(stage.name)
+        || (isLastStage && toolRun.exitStatus === 'error');
+
+      return { ...stage, durationSeconds, progress, content, hostCommands: stageHostCmds, hasErrors };
     });
-  }, [stages, diskProgress, rawLines, startLine, hostCommands]);
+  }, [stages, diskProgress, rawLines, startLine, hostCommands, toolRun.exitStatus]);
 
   if (stages.length === 0) {
     return (
@@ -114,7 +123,7 @@ export function V2VPipelineView({ toolRun }: V2VPipelineViewProps) {
       <div className="flex flex-wrap items-start gap-y-5 gap-x-0">
         {stagesWithDuration.map((stage, idx) => {
           const isLast = idx === stagesWithDuration.length - 1;
-          const hasError = isStageError(stage.name);
+          const hasError = stage.hasErrors;
           const hasContent = stage.content !== null;
           const isExpanded = expandedStage === idx;
           const contentLines = stage.content?.length ?? 0;
@@ -137,9 +146,16 @@ export function V2VPipelineView({ toolRun }: V2VPipelineViewProps) {
                       relative px-3 py-2 rounded-lg text-xs max-w-[200px] transition-all border-2
                       ${isConversion ? 'font-bold' : 'font-medium'}
                       ${hasContent ? 'cursor-pointer' : ''}
-                      ${isExpanded ? 'shadow-md shadow-emerald-200 dark:shadow-emerald-900/40' : ''}
+                      ${isExpanded
+                        ? hasError
+                          ? 'shadow-md shadow-red-200 dark:shadow-red-900/40'
+                          : 'shadow-md shadow-emerald-200 dark:shadow-emerald-900/40'
+                        : ''
+                      }
                       ${hasError
-                        ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-400 dark:border-red-600'
+                        ? isLast
+                          ? 'bg-red-500 dark:bg-red-600 text-white border-red-500 dark:border-red-600'
+                          : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-400 dark:border-red-600'
                         : isLast
                           ? 'bg-emerald-500 dark:bg-emerald-600 text-white border-emerald-500 dark:border-emerald-600'
                           : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 border-emerald-400 dark:border-emerald-600'
@@ -176,23 +192,24 @@ export function V2VPipelineView({ toolRun }: V2VPipelineViewProps) {
                           style={{ width: `${stage.progress.percentComplete}%` }}
                         />
                       </div>
-                      <span className="text-[9px] text-emerald-600 dark:text-emerald-400">
+                      <span className="block text-center text-[9px] text-emerald-600 dark:text-emerald-400">
                         {stage.progress.percentComplete}%
                       </span>
                     </div>
                   )}
                 </div>
 
-                {/* Connector line */}
+                {/* Connector line — when a progress bar is present, self-align to top + offset
+                   so the connector stays centered on the button instead of the taller column */}
                 {!isLast && (
-                  <div className="w-5 h-0.5 bg-emerald-300 dark:bg-emerald-700 flex-shrink-0" />
+                  <div className={`w-5 h-0.5 flex-shrink-0${stage.progress ? ' self-start mt-4' : ''} ${hasError ? 'bg-red-300 dark:bg-red-700' : 'bg-emerald-300 dark:bg-emerald-700'}`} />
                 )}
               </div>
 
               {/* Timing below */}
               <div className="mt-1 flex flex-col items-center">
                 {stage.durationSeconds !== null && stage.durationSeconds > 0 && (
-                  <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                  <span className={`text-[10px] font-medium ${hasError ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                     {formatDuration(stage.durationSeconds)}
                   </span>
                 )}
@@ -204,15 +221,21 @@ export function V2VPipelineView({ toolRun }: V2VPipelineViewProps) {
       </div>
 
       {/* Modal for stage content */}
-      {expandedStage !== null && stagesWithDuration[expandedStage]?.content && (
-        <StageContentModal
-          stageName={stagesWithDuration[expandedStage].name}
-          content={stagesWithDuration[expandedStage].content!}
-          toolRun={toolRun}
-          hostCommands={stagesWithDuration[expandedStage].hostCommands}
-          onClose={() => setExpandedStage(null)}
-        />
-      )}
+      {expandedStage !== null && stagesWithDuration[expandedStage]?.content && (() => {
+        const stage = stagesWithDuration[expandedStage];
+        const nextStage = stagesWithDuration[expandedStage + 1];
+        return (
+          <StageContentModal
+            stageName={stage.name}
+            content={stage.content!}
+            toolRun={toolRun}
+            hostCommands={stage.hostCommands}
+            stageStartLine={stage.lineNumber}
+            stageEndLine={nextStage ? nextStage.lineNumber : toolRun.endLine}
+            onClose={() => setExpandedStage(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -341,7 +364,7 @@ function extractWarnings(content: string[]): string[] {
 // Single source of truth for stage → view mapping. Adding a new stage view
 // only requires one entry here instead of updating 3 separate places.
 
-type StageRenderProps = { content: string[]; stageName: string; toolRun: V2VToolRun };
+type StageRenderProps = { content: string[]; stageName: string; toolRun: V2VToolRun; stageStartLine: number; stageEndLine: number };
 
 interface StageViewEntry {
   match: (name: string, content?: string[]) => boolean;
@@ -366,8 +389,8 @@ const STAGE_VIEWS: StageViewEntry[] = [
   { match: isDiskCopyStage, render: ({ content, stageName }) => <DiskCopyView content={content} stageName={stageName} />, isSpecific: true },
   { match: isOutputMetadataStage, render: ({ content }) => <OutputMetadataView content={content} />, isSpecific: true },
   // Conversion stages — content-based fallback, not specific
-  { match: isLinuxConversionStage, render: ({ content, toolRun }) => <LinuxConversionView content={content} toolRun={toolRun} />, isSpecific: false },
-  { match: isWindowsConversionStage, render: ({ content, toolRun }) => <WindowsConversionView content={content} toolRun={toolRun} />, isSpecific: false },
+  { match: isLinuxConversionStage, render: ({ content, toolRun, stageStartLine, stageEndLine }) => <LinuxConversionView content={content} toolRun={toolRun} stageStartLine={stageStartLine} stageEndLine={stageEndLine} />, isSpecific: false },
+  { match: isWindowsConversionStage, render: ({ content, toolRun, stageStartLine, stageEndLine }) => <WindowsConversionView content={content} toolRun={toolRun} stageStartLine={stageStartLine} stageEndLine={stageEndLine} />, isSpecific: false },
 ];
 
 /** Find the first matching stage view entry. */
@@ -390,12 +413,16 @@ function StageContentModal({
   content,
   toolRun,
   hostCommands: stageHostCmds,
+  stageStartLine,
+  stageEndLine,
   onClose,
 }: {
   stageName: string;
   content: string[];
   toolRun: V2VToolRun;
   hostCommands: V2VHostCommand[];
+  stageStartLine: number;
+  stageEndLine: number;
   onClose: () => void;
 }) {
   const [showRaw, setShowRaw] = useState(false);
@@ -427,10 +454,31 @@ function StageContentModal({
     };
   }, [handleKeyDown]);
 
+  // Filter API calls, file copies, and registry hive accesses to this stage's line range
+  const stageApiCalls = useMemo(
+    () => toolRun.apiCalls.filter((c) => c.lineNumber >= stageStartLine && c.lineNumber < stageEndLine),
+    [toolRun.apiCalls, stageStartLine, stageEndLine],
+  );
+  const stageFileCopies = useMemo(
+    () => toolRun.virtioWin.fileCopies.filter((fc) => fc.lineNumber >= stageStartLine && fc.lineNumber < stageEndLine),
+    [toolRun.virtioWin.fileCopies, stageStartLine, stageEndLine],
+  );
+  const stageHiveAccesses = useMemo(
+    () => toolRun.registryHiveAccesses.filter((a) => a.lineNumber >= stageStartLine && a.lineNumber < stageEndLine),
+    [toolRun.registryHiveAccesses, stageStartLine, stageEndLine],
+  );
+  const stageHiveGroups = useMemo(
+    () => groupHiveAccesses(stageHiveAccesses),
+    [stageHiveAccesses],
+  );
+
   // Detect content type
   const isYaml = content.some((l) => /^(apiVersion:|kind:|metadata:|spec:|---\s*$)/.test(l.trim()));
   const isStructured = hasStructuredView(stageName, content);
   const label = isYaml ? 'YAML Output' : 'Output';
+
+  // Conversion stages already show their own views — skip the generic ones for those
+  const isConversionStage = isLinuxConversionStage(stageName, content) || isWindowsConversionStage(stageName, content);
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10">
@@ -482,10 +530,31 @@ function StageContentModal({
               {(() => {
                 const entry = findStageView(stageName, content);
                 return entry
-                  ? entry.render({ content, stageName, toolRun })
+                  ? entry.render({ content, stageName, toolRun, stageStartLine, stageEndLine })
                   : <FileWritesView content={content} />;
               })()}
               <StageWarnings content={content} />
+              {/* Per-stage file operations tree (skip for conversion stages that have their own) */}
+              {!isConversionStage && (
+                <StageFileOpsTree apiCalls={stageApiCalls} fileCopies={stageFileCopies} />
+              )}
+              {/* Per-stage registry hive operations (skip for conversion stages that have their own) */}
+              {!isConversionStage && stageHiveGroups.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-[10px] font-semibold text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2">
+                    Registry Hive Operations
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-gray-400 mb-2">
+                    {stageHiveGroups.length} registry hive{stageHiveGroups.length !== 1 ? 's' : ''} accessed
+                    ({stageHiveAccesses.length} key path{stageHiveAccesses.length !== 1 ? 's' : ''} traversed)
+                  </div>
+                  <div className="space-y-2">
+                    {stageHiveGroups.map((group) => (
+                      <HiveGroupCard key={group.hivePath} group={group} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <RawLogWithSearch content={content} search={rawSearch} onSearchChange={setRawSearch} />
@@ -576,7 +645,16 @@ function StageHostCommands({ commands }: { commands: V2VHostCommand[] }) {
   );
 }
 
-// ── Raw log with search ─────────────────────────────────────────────────────
+// ── Raw log with search (virtualized) ───────────────────────────────────────
+
+/** Row height in pixels for virtual scrolling */
+const RAW_ROW_HEIGHT = 18;
+/** Extra rows rendered above/below viewport */
+const RAW_OVERSCAN = 30;
+/** Container viewport height in pixels */
+const RAW_VIEWPORT_HEIGHT = 520;
+/** Debounce delay for search input (ms) */
+const RAW_SEARCH_DEBOUNCE_MS = 150;
 
 function RawLogWithSearch({
   content,
@@ -587,18 +665,48 @@ function RawLogWithSearch({
   search: string;
   onSearchChange: (v: string) => void;
 }) {
-  const lowerSearch = search.toLowerCase();
-  const preRef = useRef<HTMLPreElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [localSearch, setLocalSearch] = useState(search);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Indices of lines that match the search
+  // Pre-lowercase all lines once — avoids re-lowercasing on every search query change
+  const lowerLines = useMemo(
+    () => content.map((line) => line.toLowerCase()),
+    [content],
+  );
+
+  const lowerSearch = useMemo(() => search.toLowerCase(), [search]);
+
+  // Debounced search propagation
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      setLocalSearch(value);
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = setTimeout(() => {
+        onSearchChange(value);
+      }, RAW_SEARCH_DEBOUNCE_MS);
+    },
+    [onSearchChange],
+  );
+
+  // Sync local search when parent changes it
+  useEffect(() => {
+    setLocalSearch(search);
+  }, [search]);
+
+  // Indices of lines that match the search (using pre-lowered lines)
   const matchLineIndices = useMemo(() => {
     if (!lowerSearch) return [];
     const indices: number[] = [];
-    for (let i = 0; i < content.length; i++) {
-      if (content[i].toLowerCase().includes(lowerSearch)) indices.push(i);
+    for (let i = 0; i < lowerLines.length; i++) {
+      if (lowerLines[i].includes(lowerSearch)) indices.push(i);
     }
     return indices;
-  }, [content, lowerSearch]);
+  }, [lowerLines, lowerSearch]);
+
+  // Set for O(1) match lookup during rendering
+  const matchSet = useMemo(() => new Set(matchLineIndices), [matchLineIndices]);
 
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
 
@@ -607,30 +715,15 @@ function RawLogWithSearch({
     setCurrentMatchIdx(0);
   }, [lowerSearch]);
 
-  // Scroll to the current match line
+  // Auto-scroll to current search match within the virtual scroll container
   useEffect(() => {
-    if (matchLineIndices.length === 0 || !preRef.current) return;
+    if (matchLineIndices.length === 0 || !containerRef.current) return;
     const lineIdx = matchLineIndices[currentMatchIdx];
     if (lineIdx === undefined) return;
-    // Use rAF to ensure the DOM has been laid out after React re-render
-    requestAnimationFrame(() => {
-      const lineEl = preRef.current?.querySelector(`[data-line="${lineIdx}"]`) as HTMLElement | null;
-      if (!lineEl) return;
-      // Find the scrollable ancestor (the modal's overflow-auto content div)
-      let container = lineEl.parentElement;
-      while (container && container.scrollHeight <= container.clientHeight) {
-        container = container.parentElement;
-      }
-      if (container) {
-        const lineRect = lineEl.getBoundingClientRect();
-        const containerRect = container.getBoundingClientRect();
-        const targetScroll = container.scrollTop + (lineRect.top - containerRect.top) - containerRect.height / 2;
-        container.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' });
-      } else {
-        lineEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      }
-    });
-  }, [currentMatchIdx, matchLineIndices, lowerSearch]);
+    const targetScroll = Math.max(0, lineIdx * RAW_ROW_HEIGHT - RAW_VIEWPORT_HEIGHT / 2);
+    containerRef.current.scrollTop = targetScroll;
+    setScrollTop(targetScroll);
+  }, [currentMatchIdx, matchLineIndices]);
 
   const goNext = useCallback(() => {
     if (matchLineIndices.length === 0) return;
@@ -644,10 +737,31 @@ function RawLogWithSearch({
 
   const currentMatchLine = matchLineIndices.length > 0 ? matchLineIndices[currentMatchIdx] : -1;
 
+  // Track scroll position — throttled with rAF
+  const rafRef = useRef(0);
+  const handleScroll = useCallback(() => {
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      const el = containerRef.current;
+      if (el) setScrollTop(el.scrollTop);
+      rafRef.current = 0;
+    });
+  }, []);
+
+  // ── Virtual scroll calculations ─────────────────────────────────
+  const totalHeight = content.length * RAW_ROW_HEIGHT;
+  const startIdx = Math.max(0, Math.floor(scrollTop / RAW_ROW_HEIGHT) - RAW_OVERSCAN);
+  const endIdx = Math.min(
+    content.length,
+    Math.ceil((scrollTop + RAW_VIEWPORT_HEIGHT) / RAW_ROW_HEIGHT) + RAW_OVERSCAN,
+  );
+  const visibleLines = content.slice(startIdx, endIdx);
+  const offsetTop = startIdx * RAW_ROW_HEIGHT;
+
   return (
     <div className="flex flex-col">
       {/* Search bar — sticky so it stays visible when scrolling */}
-      <div className="sticky top-0 z-10 flex items-center gap-2 px-5 py-2 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+      <div className="flex items-center gap-2 px-5 py-2 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex-shrink-0">
         <svg className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
@@ -655,13 +769,13 @@ function RawLogWithSearch({
           type="text"
           placeholder="Search raw log..."
           aria-label="Search raw log"
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
+          value={localSearch}
+          onChange={(e) => handleSearchChange(e.target.value)}
           className="flex-1 text-xs px-2 py-1 border border-slate-200 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-gray-100 placeholder:text-slate-400 outline-none focus:border-indigo-400 dark:focus:border-indigo-500"
           onKeyDown={(e) => {
-            if (e.key === 'Escape' && search) {
+            if (e.key === 'Escape' && localSearch) {
               e.stopPropagation();
-              onSearchChange('');
+              handleSearchChange('');
             } else if (e.key === 'Enter') {
               e.preventDefault();
               if (e.shiftKey) goPrev();
@@ -671,7 +785,7 @@ function RawLogWithSearch({
         />
         {lowerSearch && matchLineIndices.length > 0 && (
           <>
-            <span className="text-[10px] text-slate-400 dark:text-gray-500 flex-shrink-0">
+            <span className="text-[10px] text-slate-400 dark:text-gray-500 flex-shrink-0 tabular-nums">
               {currentMatchIdx + 1} / {matchLineIndices.length}
             </span>
             <button
@@ -699,9 +813,9 @@ function RawLogWithSearch({
             No matches
           </span>
         )}
-        {search && (
+        {localSearch && (
           <button
-            onClick={() => onSearchChange('')}
+            onClick={() => handleSearchChange('')}
             className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
             title="Clear search"
           >
@@ -712,38 +826,71 @@ function RawLogWithSearch({
         )}
       </div>
 
-      {/* Log content — all lines shown, matches highlighted */}
-      <pre
-        ref={preRef}
-        className="px-5 py-4 text-[11px] font-mono leading-relaxed text-slate-800 dark:text-gray-200"
+      {/* Log content — virtual scrolling */}
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="font-mono text-[11px] leading-[1.6] text-slate-800 dark:text-gray-200 overflow-auto"
+        style={{ maxHeight: RAW_VIEWPORT_HEIGHT }}
       >
-        {content.map((line, i) => {
-          const isMatch = lowerSearch && line.toLowerCase().includes(lowerSearch);
-          const isCurrent = i === currentMatchLine;
-          return (
-            <div
-              key={i}
-              data-line={i}
-              className={`whitespace-pre ${
-                isCurrent
-                  ? 'bg-yellow-200 dark:bg-yellow-900/40'
-                  : isMatch
-                    ? 'bg-yellow-100/60 dark:bg-yellow-900/20'
-                    : ''
-              }`}
-            >
-              {isMatch ? highlightSearchText(line, lowerSearch) : line}
-            </div>
-          );
-      })}
-      </pre>
+        <div style={{ height: totalHeight, position: 'relative', minWidth: 'fit-content' }}>
+          <div style={{ position: 'absolute', top: offsetTop, left: 0, right: 0 }}>
+            {visibleLines.map((line, vi) => {
+              const lineIdx = startIdx + vi;
+              const isMatch = matchSet.has(lineIdx);
+              return (
+                <RawLogRow
+                  key={lineIdx}
+                  text={line}
+                  isMatch={isMatch}
+                  isCurrent={lineIdx === currentMatchLine}
+                  searchQuery={isMatch ? search : ''}
+                />
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Line count */}
+      <div className="px-5 py-1 text-[10px] text-slate-400 dark:text-gray-500 border-t border-slate-200 dark:border-slate-700 flex-shrink-0">
+        {content.length.toLocaleString()} lines
+      </div>
     </div>
   );
 }
 
-function highlightSearchText(text: string, lowerQuery: string): ReactNode {
+// ── Memoized raw log row ────────────────────────────────────────────────────
+
+interface RawLogRowProps {
+  text: string;
+  isMatch: boolean;
+  isCurrent: boolean;
+  searchQuery: string;
+}
+
+const RawLogRow = memo(function RawLogRow({ text, isMatch, isCurrent, searchQuery }: RawLogRowProps) {
+  let bg = '';
+  if (isCurrent) {
+    bg = 'bg-yellow-200 dark:bg-yellow-900/40';
+  } else if (isMatch) {
+    bg = 'bg-yellow-100/60 dark:bg-yellow-900/20';
+  }
+
+  return (
+    <div
+      className={`whitespace-pre px-5 ${bg}`}
+      style={{ height: RAW_ROW_HEIGHT }}
+    >
+      {isMatch && searchQuery ? highlightSearchText(text, searchQuery) : text}
+    </div>
+  );
+});
+
+function highlightSearchText(text: string, query: string): ReactNode {
   const parts: React.ReactNode[] = [];
   const lower = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
   let lastIdx = 0;
 
   while (true) {
@@ -752,10 +899,10 @@ function highlightSearchText(text: string, lowerQuery: string): ReactNode {
     if (idx > lastIdx) parts.push(text.slice(lastIdx, idx));
     parts.push(
       <mark key={idx} className="bg-yellow-300 dark:bg-yellow-700 text-inherit rounded-sm px-0.5">
-        {text.slice(idx, idx + lowerQuery.length)}
+        {text.slice(idx, idx + query.length)}
       </mark>,
     );
-    lastIdx = idx + lowerQuery.length;
+    lastIdx = idx + query.length;
   }
   if (lastIdx < text.length) parts.push(text.slice(lastIdx));
   return parts.length > 0 ? <>{parts}</> : text;

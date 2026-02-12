@@ -54,12 +54,29 @@ interface NbdkitInstance {
   transportModes: string;
 }
 
+interface OvaSource {
+  ovaPath: string;
+  ovaType: string;
+  extractDir: string;
+  ovfFile: string;
+  manifestFile: string;
+  disks: OvaDisk[];
+}
+
+interface OvaDisk {
+  name: string;
+  offsetBytes: number;
+  sizeBytes: number;
+  socket: string;
+}
+
 interface ParsedSourceSetup {
   vm: SourceVm | null;
   disks: SourceDisk[];
   nics: SourceNic[];
   controllers: SourceController[];
   nbdkitInstances: NbdkitInstance[];
+  ova: OvaSource | null;
 }
 
 // ── Parser ──────────────────────────────────────────────────────────────────
@@ -272,7 +289,92 @@ function parseSourceSetup(lines: string[]): ParsedSourceSetup {
     }
   }
 
-  return { vm, disks, nics, controllers, nbdkitInstances };
+  // ── Parse OVA source ───────────────────────────────────────────────
+  let ova: OvaSource | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // "ova: orig_ova = /ova/file.ova, top_dir = /var/tmp/ova.xxx, ova_type = TarOptimized /ova/file.ova"
+    const ovaInfoMatch = line.match(/ova:\s*orig_ova\s*=\s*(\S+),\s*top_dir\s*=\s*(\S+),\s*ova_type\s*=\s*(.+)/);
+    if (ovaInfoMatch && !ova) {
+      ova = {
+        ovaPath: ovaInfoMatch[1],
+        extractDir: ovaInfoMatch[2],
+        ovaType: ovaInfoMatch[3].trim(),
+        ovfFile: '',
+        manifestFile: '',
+        disks: [],
+      };
+    }
+
+    // "tar -xf '...' -C '...' 'file.ovf' 'file.mf'"
+    if (ova && line.includes('tar -xf') && line.includes('.ovf')) {
+      const ovfMatch = line.match(/'([^']*\.ovf)'/);
+      const mfMatch = line.match(/'([^']*\.mf)'/);
+      if (ovfMatch) ova.ovfFile = ovfMatch[1];
+      if (mfMatch) ova.manifestFile = mfMatch[1];
+    }
+
+    // "ova: processing manifest file /var/tmp/.../file.mf"
+    if (ova && !ova.manifestFile) {
+      const mfMatch = line.match(/ova:\s*processing manifest file\s+(\S+)/);
+      if (mfMatch) ova.manifestFile = mfMatch[1];
+    }
+
+    // qemu-nbd with json offset/size — extract disk info
+    // 'json:{ "file": { "driver": "raw", "offset": 48640, "size": 2922259968, ... "filename": "/ova/file.ova" } }'
+    const qemuNbdMatch = line.match(/qemu-nbd.*'--socket'\s+'([^']+)'\s+.*json:\{/);
+    if (qemuNbdMatch && ova) {
+      const socket = qemuNbdMatch[1];
+      // Extract offset and size from the json blob
+      const offsetMatch = line.match(/"offset":\s*(\d+)/);
+      const sizeMatch = line.match(/"size":\s*(\d+)/);
+      // Extract disk name from the OVA path context — look for the filename in nearby lines
+      let diskName = '';
+      // Look backwards for "ova: testing if ... exists"
+      for (let k = i - 1; k >= Math.max(0, i - 10); k--) {
+        const testMatch = lines[k].match(/ova:\s*testing if\s+(\S+)\s+exists/);
+        if (testMatch) {
+          diskName = testMatch[1];
+          break;
+        }
+      }
+      ova.disks.push({
+        name: diskName,
+        offsetBytes: offsetMatch ? parseInt(offsetMatch[1], 10) : 0,
+        sizeBytes: sizeMatch ? parseInt(sizeMatch[1], 10) : 0,
+        socket,
+      });
+    }
+  }
+
+  // Also detect qemu-nbd with 'running qemu-nbd:' header
+  for (let i = 0; i < lines.length; i++) {
+    if (ova && lines[i].includes('running qemu-nbd:') && i + 1 < lines.length) {
+      const cmdLine = lines[i + 1];
+      const socketMatch = cmdLine.match(/'--socket'\s+'([^']+)'/);
+      const offsetMatch = cmdLine.match(/"offset":\s*(\d+)/);
+      const sizeMatch = cmdLine.match(/"size":\s*(\d+)/);
+      if (socketMatch && !ova.disks.some((d) => d.socket === socketMatch[1])) {
+        let diskName = '';
+        for (let k = i - 1; k >= Math.max(0, i - 10); k--) {
+          const testMatch = lines[k].match(/ova:\s*testing if\s+(\S+)\s+exists/);
+          if (testMatch) {
+            diskName = testMatch[1];
+            break;
+          }
+        }
+        ova.disks.push({
+          name: diskName,
+          offsetBytes: offsetMatch ? parseInt(offsetMatch[1], 10) : 0,
+          sizeBytes: sizeMatch ? parseInt(sizeMatch[1], 10) : 0,
+          socket: socketMatch[1],
+        });
+      }
+    }
+  }
+
+  return { vm, disks, nics, controllers, nbdkitInstances, ova };
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -280,11 +382,12 @@ function parseSourceSetup(lines: string[]): ParsedSourceSetup {
 export function SourceSetupView({ content }: { content: string[] }) {
   const parsed = useMemo(() => parseSourceSetup(content), [content]);
 
-  const hasData = parsed.vm !== null || parsed.nbdkitInstances.length > 0;
+  const hasData = parsed.vm !== null || parsed.nbdkitInstances.length > 0 || parsed.ova !== null;
   if (!hasData) return null;
 
   return (
     <div className="space-y-4">
+      {parsed.ova && <OvaSection ova={parsed.ova} />}
       {parsed.vm && <VmSection vm={parsed.vm} disks={parsed.disks} nics={parsed.nics} controllers={parsed.controllers} />}
       {parsed.nbdkitInstances.length > 0 && <NbdkitSection instances={parsed.nbdkitInstances} />}
     </div>
@@ -292,6 +395,90 @@ export function SourceSetupView({ content }: { content: string[] }) {
 }
 
 // ── Sub-sections ────────────────────────────────────────────────────────────
+
+function OvaSection({ ova }: { ova: OvaSource }) {
+  // Extract just the filename from the full OVA path
+  const ovaFilename = ova.ovaPath.split('/').pop() || ova.ovaPath;
+
+  return (
+    <div>
+      <SectionHeader title="OVA Source" />
+      <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+        {/* Header */}
+        <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-xs font-semibold text-slate-700 dark:text-gray-200">
+              {ovaFilename}
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-[10px] text-amber-700 dark:text-amber-300 font-medium">
+              OVA
+            </span>
+            {ova.ovaType && (
+              <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-[10px] text-slate-600 dark:text-gray-300">
+                {ova.ovaType}
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-slate-500 dark:text-gray-400">
+            <span className="font-mono" title="OVA path">{ova.ovaPath}</span>
+          </div>
+        </div>
+
+        {/* OVF / Manifest */}
+        {(ova.ovfFile || ova.manifestFile) && (
+          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+            {ova.ovfFile && (
+              <div>
+                <span className="text-slate-400 dark:text-gray-500 mr-1">OVF:</span>
+                <span className="font-mono text-slate-600 dark:text-gray-300">{ova.ovfFile}</span>
+              </div>
+            )}
+            {ova.manifestFile && (
+              <div>
+                <span className="text-slate-400 dark:text-gray-500 mr-1">Manifest:</span>
+                <span className="font-mono text-slate-600 dark:text-gray-300">
+                  {ova.manifestFile.split('/').pop() || ova.manifestFile}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Disks */}
+        {ova.disks.length > 0 && (
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-left text-slate-400 dark:text-gray-500 border-b border-slate-100 dark:border-slate-800">
+                <th className="px-3 py-1 font-medium">Disk</th>
+                <th className="px-3 py-1 font-medium">Size</th>
+                <th className="px-3 py-1 font-medium">Offset</th>
+                <th className="px-3 py-1 font-medium">Socket</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ova.disks.map((disk, idx) => (
+                <tr key={idx} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                  <td className="px-3 py-1.5 font-mono text-slate-700 dark:text-gray-300">
+                    {disk.name || `disk-${idx}`}
+                  </td>
+                  <td className="px-3 py-1.5 text-slate-600 dark:text-gray-300">
+                    {disk.sizeBytes > 0 ? formatBytes(disk.sizeBytes) : '—'}
+                  </td>
+                  <td className="px-3 py-1.5 font-mono text-[10px] text-slate-500 dark:text-gray-400">
+                    {disk.offsetBytes > 0 ? `${disk.offsetBytes.toLocaleString()} B` : '—'}
+                  </td>
+                  <td className="px-3 py-1.5 font-mono text-[10px] text-slate-500 dark:text-gray-400 truncate max-w-[200px]" title={disk.socket}>
+                    {disk.socket}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function VmSection({
   vm,

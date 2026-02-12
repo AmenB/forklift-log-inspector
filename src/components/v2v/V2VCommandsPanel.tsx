@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import type { V2VApiCall, V2VGuestCommand } from '../../types/v2v';
 import { LineLink } from './LineLink';
+import { ExpandArrow } from '../common';
 
 interface V2VCommandsPanelProps {
   apiCalls: V2VApiCall[];
@@ -274,7 +275,7 @@ export function V2VCommandsPanel({ apiCalls }: V2VCommandsPanelProps) {
                 <span
                   className={`flex-shrink-0 text-[9px] ${hasCmds ? 'text-indigo-500 dark:text-indigo-400' : 'text-slate-300 dark:text-slate-600'}`}
                 >
-                  {hasCmds ? (isExpanded ? '▼' : '▶') : '·'}
+                  {hasCmds ? <ExpandArrow expanded={isExpanded} /> : '·'}
                 </span>
 
                 {/* Function name */}
@@ -378,7 +379,7 @@ export function V2VCommandsPanel({ apiCalls }: V2VCommandsPanelProps) {
                               <span
                                 className={`flex-shrink-0 text-[9px] mt-0.5 ${hasStdout ? 'text-cyan-500' : 'text-slate-300 dark:text-slate-600'}`}
                               >
-                                {hasStdout ? (isCmdExpanded ? '▼' : '▶') : '·'}
+                                {hasStdout ? <ExpandArrow expanded={isCmdExpanded} /> : '·'}
                               </span>
 
                               {/* Source badge */}

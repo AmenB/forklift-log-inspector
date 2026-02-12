@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { V2VHostCommand } from '../../types/v2v';
 import { LineLink } from './LineLink';
+import { ExpandArrow } from '../common';
 
 interface HostCommandsPanelProps {
   commands: V2VHostCommand[];
@@ -60,9 +61,7 @@ function CommandGroupCard({ group }: { group: CommandGroup }) {
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-3 px-4 py-2 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left"
       >
-        <span className="text-[10px] text-indigo-500 dark:text-indigo-400 flex-shrink-0">
-          {expanded ? '▼' : '▶'}
-        </span>
+        <ExpandArrow expanded={expanded} className="text-[10px] text-indigo-500 dark:text-indigo-400 flex-shrink-0" />
         <span className="text-xs font-semibold font-mono text-slate-800 dark:text-gray-200">
           {group.executable}
         </span>

@@ -97,6 +97,12 @@ export function V2VRawLogViewer({ toolRun }: V2VRawLogViewerProps) {
     return counts;
   }, [toolRun.rawLines.length, toolRun.lineCategories]);
 
+  // Pre-lowercase all lines once — avoids re-lowercasing on every search query change
+  const lowerLines = useMemo(
+    () => toolRun.rawLines.map((line) => line.toLowerCase()),
+    [toolRun.rawLines],
+  );
+
   // Pre-lowercase the search query once
   const lowerSearch = useMemo(() => searchQuery.toLowerCase(), [searchQuery]);
 
@@ -120,17 +126,17 @@ export function V2VRawLogViewer({ toolRun }: V2VRawLogViewerProps) {
     return lines;
   }, [toolRun, componentFilter]);
 
-  // Compute search match indices within filteredLines
+  // Compute search match indices within filteredLines using pre-lowered lines
   const searchMatchIndices = useMemo(() => {
     if (!lowerSearch) return [];
     const indices: number[] = [];
     for (let i = 0; i < filteredLines.length; i++) {
-      if (filteredLines[i].text.toLowerCase().includes(lowerSearch)) {
+      if (lowerLines[filteredLines[i].index].includes(lowerSearch)) {
         indices.push(i);
       }
     }
     return indices;
-  }, [filteredLines, lowerSearch]);
+  }, [filteredLines, lowerSearch, lowerLines]);
 
   // Reset current match when search changes
   useEffect(() => {
@@ -195,10 +201,15 @@ export function V2VRawLogViewer({ toolRun }: V2VRawLogViewerProps) {
     }
   }, [componentFilter]);
 
-  // Track scroll position
+  // Track scroll position — throttled with rAF to avoid layout thrashing
+  const rafRef = useRef(0);
   const handleScroll = useCallback(() => {
-    const el = containerRef.current;
-    if (el) setScrollTop(el.scrollTop);
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      const el = containerRef.current;
+      if (el) setScrollTop(el.scrollTop);
+      rafRef.current = 0;
+    });
   }, []);
 
   // Build a Set of filteredLines indices that are search matches for O(1) lookup
@@ -326,14 +337,15 @@ export function V2VRawLogViewer({ toolRun }: V2VRawLogViewerProps) {
             <div style={{ position: 'absolute', top: offsetTop, left: 0 }}>
               {visibleLines.map((line, vi) => {
                 const filteredIdx = startIdx + vi;
+                const isMatch = searchMatchSet.has(filteredIdx);
                 return (
                   <LogRow
                     key={line.index}
                     line={line}
                     isHighlighted={highlightedLine === line.globalLine}
-                    isSearchMatch={searchMatchSet.has(filteredIdx)}
+                    isSearchMatch={isMatch}
                     isCurrentMatch={filteredIdx === currentSearchLine}
-                    searchQuery={searchQuery}
+                    searchQuery={isMatch ? searchQuery : ''}
                   />
                 );
               })}

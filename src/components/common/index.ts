@@ -1,4 +1,5 @@
 export { CopyButton } from './CopyButton';
+export { ExpandArrow } from './ExpandArrow';
 export { CollapsibleCard } from './CollapsibleCard';
 export { EmptyState } from './EmptyState';
 export { JsonViewer, formatRawJson } from './JsonViewer';

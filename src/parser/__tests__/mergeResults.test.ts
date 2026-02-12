@@ -82,7 +82,7 @@ describe('mergeResults', () => {
   });
 
   it('merges two results with overlapping plans (same namespace/name)', () => {
-    const planA = makePlan('plan', 'ns', { status: 'Running', vms: { 'vm-1': { id: 'vm-1', name: 'v1', currentPhase: 'Copy', currentStep: '', migrationType: 'Unknown', phaseHistory: [], dataVolumes: [], createdResources: [], phaseLogs: {}, firstSeen: new Date(), lastSeen: new Date() } } });
+    const planA = makePlan('plan', 'ns', { status: 'Running', vms: { 'vm-1': { id: 'vm-1', name: 'v1', currentPhase: 'Copy', currentStep: '', migrationType: 'Unknown', transferMethod: 'Unknown', phaseHistory: [], dataVolumes: [], createdResources: [], phaseLogs: {}, firstSeen: new Date(), lastSeen: new Date() } } });
     const planB = makePlan('plan', 'ns', { status: 'Succeeded', spec: { description: 'From YAML' } });
     const a = makeParsedData([planA], 10);
     const b = makeParsedData([planB], 5);

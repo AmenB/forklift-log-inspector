@@ -94,6 +94,7 @@ describe('processPlanLog', () => {
       currentPhase: 'CreateDataVolumes',
       currentStep: '',
       migrationType: 'Unknown',
+      transferMethod: 'Unknown',
       phaseHistory: [{ name: 'CreateDataVolumes', step: '', startedAt: new Date() }],
       dataVolumes: [],
       createdResources: [],

@@ -13,6 +13,7 @@ function createVM(id: string, name: string, ts: Date): VM {
     currentPhase: '',
     currentStep: '',
     migrationType: MigrationTypes.Unknown,
+    transferMethod: 'Unknown',
     phaseHistory: [],
     dataVolumes: [],
     createdResources: [],
@@ -154,6 +155,11 @@ export function processPlanLog(store: LogStore, entry: LogEntry, ts: Date): void
   if (msg.startsWith('Condition deleted')) {
     processConditionDeleted(plan, entry);
     return;
+  }
+
+  // Check for storage offload (VSphereXcopy populator)
+  if (detectStorageOffload(entry)) {
+    markVMStorageOffload(plan, entry);
   }
 
   // Check for DataVolume creation
@@ -708,3 +714,48 @@ export function storeVMLog(plan: Plan, entry: LogEntry): void {
   }
   vm.phaseLogs[phase].push(rawLogEntry);
 }
+
+/**
+ * Detect storage offload (VSphereXcopy) from a log entry.
+ * Signals:
+ *   - "Creating pvc" with dataSourceRef.kind === "VSphereXcopyVolumePopulator"
+ *     or annotations containing "copy-offload" / "xcopy"
+ *   - "Creating the populator resource" with a VSphereXcopyVolumePopulator key
+ *   - Any message referencing VSphereXcopyVolumePopulator / VSphereXcopyPopulator
+ *   - Messages about "populator CR" (Deleting / Deleted / Successfully deleted)
+ */
+function detectStorageOffload(entry: LogEntry): boolean {
+  const msg = entry.msg || '';
+  const raw = entry.rawLine || '';
+
+  // Fast check: look for known keywords anywhere in the raw line
+  if (raw.includes('VSphereXcopy') || raw.includes('copy-offload') || raw.includes('xcopy-initial-offload')) {
+    return true;
+  }
+
+  // "Creating the populator resource" message
+  if (msg === 'Creating the populator resource') {
+    return true;
+  }
+
+  // Messages mentioning populator CR
+  if (msg.includes('populator CR') || msg.includes('Populator CR')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Mark the VM (or all VMs in the plan) as using storage offload.
+ */
+function markVMStorageOffload(plan: Plan, entry: LogEntry): void {
+  const { id: vmID } = getVMInfo(entry);
+  if (vmID) {
+    const vm = plan.vms[vmID];
+    if (vm) {
+      vm.transferMethod = 'StorageOffload';
+    }
+  }
+}
+

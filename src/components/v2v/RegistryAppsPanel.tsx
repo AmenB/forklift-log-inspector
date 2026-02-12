@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { V2VInstalledApp, V2VRegistryHiveAccess, V2VHivexValueOp } from '../../types/v2v';
 import { LineLink } from './LineLink';
+import { ExpandArrow } from '../common';
 
 interface RegistryAppsPanelProps {
   apps: V2VInstalledApp[];
@@ -141,9 +142,7 @@ function AppRow({ app }: { app: V2VInstalledApp }) {
         <td className="px-3 py-1.5 text-slate-800 dark:text-gray-200">
           <div className="flex items-center gap-1.5">
             {hasDetails && (
-              <span className="text-[8px] text-slate-400 flex-shrink-0">
-                {expanded ? '▼' : '▶'}
-              </span>
+              <ExpandArrow expanded={expanded} className="text-[8px] text-slate-400 flex-shrink-0" />
             )}
             <span className="truncate">{displayName}</span>
           </div>
@@ -206,7 +205,7 @@ export function HiveGroupCard({ group }: { group: HiveGroup }) {
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-3 px-3 py-2 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors text-left"
       >
-        <span className="text-[9px] text-slate-400">{expanded ? '▼' : '▶'}</span>
+        <ExpandArrow expanded={expanded} className="text-[9px] text-slate-400" />
         <span className="text-sm font-semibold text-slate-800 dark:text-gray-200">
           {hiveFileName}
         </span>
@@ -272,9 +271,7 @@ function KeyPathRow({ access }: {
       >
         {/* Expand toggle */}
         {hasValues ? (
-          <span className="text-[8px] text-slate-400 flex-shrink-0 w-2">
-            {showValues ? '▼' : '▶'}
-          </span>
+          <ExpandArrow expanded={showValues} className="text-[8px] text-slate-400 flex-shrink-0 w-2" />
         ) : (
           <span className="w-2 flex-shrink-0" />
         )}

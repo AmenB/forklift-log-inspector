@@ -85,6 +85,11 @@ export function VMCard({ vm }: VMCardProps) {
                 {vm.migrationType}
               </span>
             )}
+            {vm.transferMethod === 'StorageOffload' && (
+              <span className="px-2 py-0.5 rounded text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 uppercase font-semibold">
+                Storage Offload
+              </span>
+            )}
           </div>
           
           <div className="flex items-center gap-4 text-sm">

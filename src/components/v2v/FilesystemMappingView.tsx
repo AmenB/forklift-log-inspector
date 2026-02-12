@@ -9,6 +9,7 @@
 import { useMemo, useState } from 'react';
 import { formatBytes } from '../../utils/format';
 import { SectionHeader } from './shared';
+import { ExpandArrow } from '../common';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -591,7 +592,7 @@ function DevicePathsSection({ paths }: { paths: DevicePath[] }) {
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-gray-400 hover:text-slate-700 dark:hover:text-gray-200 transition-colors uppercase tracking-wider font-semibold mb-2"
       >
-        <span className="text-[9px]">{open ? '\u25BC' : '\u25B6'}</span>
+        <ExpandArrow expanded={open} className="text-[9px]" />
         Device Paths (by-path)
         <span className="text-[10px] font-normal text-slate-400 dark:text-gray-500">({paths.length})</span>
       </button>

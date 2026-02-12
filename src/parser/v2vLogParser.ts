@@ -45,6 +45,7 @@ import {
   buildGuestInfo,
   parseInstalledApps,
   parseLibvirtXML,
+  parseBlkidLine,
 } from './v2v/guestInfoParser';
 
 import {
@@ -111,17 +112,24 @@ const BUILD_CMD_NOSPACE_RE = /Building command:(\S+?)\[([^\]]*)\]/g;
  * Checks the first ~10 lines for characteristic markers.
  */
 export function isV2VLog(content: string): boolean {
-  // Look at the first 2000 chars (covers the first few lines even when they
+  // Look at the first 3000 chars (covers the first few lines even when they
   // are long, like the concatenated Building-command line in virt-v2v.logs).
   // Strip optional container/k8s timestamp prefixes so the markers are visible.
   const head = content
     .slice(0, 3000)
     .replace(CONTAINER_TS_PREFIX_RE, '')
     .replace(/\n\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+/g, '\n');
+  // MTV wrapper: "Building command: virt-v2v [...]"
   if (/Building command[:\s]*virt-v2v/i.test(head)) return true;
+  // MTV info prefix: "info: virt-v2v ..."
   if (/^info:\s*virt-v2v/m.test(head)) return true;
+  // Raw virt-v2v output: "virt-v2v: ..." (version line, stage headers, etc.)
+  if (/^virt-v2v:/m.test(head)) return true;
+  // Tool-specific names
   if (/virt-v2v-in-place/i.test(head)) return true;
   if (/virt-v2v-inspector/i.test(head)) return true;
+  // libguestfs trace lines (present in verbose v2v output)
+  if (/^libguestfs:\s+trace:/m.test(head)) return true;
   return false;
 }
 
@@ -375,6 +383,7 @@ function parseToolRunSection(
   // Guest OS info from `i_` prefixed lines (e.g. `i_root = /dev/sda2`)
   let guestInfo: V2VGuestInfo | null = null;
   const guestInfoRaw = new Map<string, string>();
+  const blkidEntries: import('../types/v2v').V2VBlkidEntry[] = [];
 
   // ── Component versions ──────────────────────────────────────────
   const versions: V2VComponentVersions = {};
@@ -417,6 +426,8 @@ function parseToolRunSection(
     session.keySegments = [];
     session.values = [];
     session.pendingGetValueName = null;
+    session.pendingChildName = null;
+    session.pendingChildParent = null;
     session.hasWriteOp = overrides?.hasWriteOp ?? false;
     session.firstWriteLine = overrides?.firstWriteLine ?? 0;
     if (overrides?.lineNumber !== undefined) {
@@ -682,6 +693,8 @@ function parseToolRunSection(
               keySegments: [],
               values: [],
               pendingGetValueName: null,
+              pendingChildName: null,
+              pendingChildParent: null,
               lineNumber: globalLine,
               rootHandle: '',
               hasWriteOp: false,
@@ -703,17 +716,30 @@ function parseToolRunSection(
           }
         }
 
-        // hivex_node_get_child adds a segment to the current path
-        if (apiName === 'hivex_node_get_child' && !apiArgs.startsWith('=') && currentHivexSession) {
-          const childMatch = apiArgs.match(HIVEX_HANDLE_NAME_RE);
-          if (childMatch) {
-            const parentHandle = childMatch[1];
-            const childName = childMatch[2];
-            // If navigating from root again, flush current path and start fresh
-            if (currentHivexSession.rootHandle && parentHandle === currentHivexSession.rootHandle && currentHivexSession.keySegments.length > 0) {
-              resetHivexTraversal(currentHivexSession, { lineNumber: globalLine });
+        // hivex_node_get_child: defer adding the segment until we see the result
+        if (apiName === 'hivex_node_get_child' && currentHivexSession) {
+          if (apiArgs.startsWith('= ')) {
+            // Result: non-zero means the child exists → commit the pending segment
+            const resultVal = apiArgs.slice(2).trim();
+            if (resultVal !== '0' && currentHivexSession.pendingChildName) {
+              currentHivexSession.keySegments.push(currentHivexSession.pendingChildName);
             }
-            currentHivexSession.keySegments.push(childName);
+            // Either way, clear the pending state
+            currentHivexSession.pendingChildName = null;
+            currentHivexSession.pendingChildParent = null;
+          } else {
+            // Call: store the child name, don't add to path yet
+            const childMatch = apiArgs.match(HIVEX_HANDLE_NAME_RE);
+            if (childMatch) {
+              const parentHandle = childMatch[1];
+              const childName = childMatch[2];
+              // If navigating from root again, flush current path and start fresh
+              if (currentHivexSession.rootHandle && parentHandle === currentHivexSession.rootHandle && currentHivexSession.keySegments.length > 0) {
+                resetHivexTraversal(currentHivexSession, { lineNumber: globalLine });
+              }
+              currentHivexSession.pendingChildName = childName;
+              currentHivexSession.pendingChildParent = parentHandle;
+            }
           }
         }
 
@@ -1069,6 +1095,14 @@ function parseToolRunSection(
       }
     }
 
+    // ── blkid output lines (`/dev/sda1: UUID="..." TYPE="vfat" ...`) ─
+    {
+      const blkidEntry = parseBlkidLine(line);
+      if (blkidEntry && !blkidEntries.some((e) => e.device === blkidEntry.device)) {
+        blkidEntries.push(blkidEntry);
+      }
+    }
+
     // ── VirtIO Win ISO / file copy tracking ─────────────────────────
     {
       // Detect the VirtIO Win ISO source line:
@@ -1242,6 +1276,7 @@ function parseToolRunSection(
   // At minimum we need `type` or `distro` to have meaningful guest info
   if (guestInfoRaw.size > 0 && (guestInfoRaw.has('root') || guestInfoRaw.has('type') || guestInfoRaw.has('distro'))) {
     guestInfo = buildGuestInfo(guestInfoRaw);
+    guestInfo.blkid = blkidEntries;
   }
 
   // Flush any unclosed hivex session

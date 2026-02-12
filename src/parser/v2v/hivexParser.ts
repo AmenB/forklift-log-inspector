@@ -12,6 +12,10 @@ export interface HivexSessionState {
   keySegments: string[];
   values: { name: string; value: string; lineNumber: number }[];
   pendingGetValueName: string | null;
+  /** Child name from hivex_node_get_child call, awaiting the = result to confirm navigation */
+  pendingChildName: string | null;
+  /** Parent handle for the pending child (for root-detection) */
+  pendingChildParent: string | null;
   lineNumber: number;
   rootHandle: string;
   hasWriteOp: boolean;

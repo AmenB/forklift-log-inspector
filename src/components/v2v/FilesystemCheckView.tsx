@@ -9,6 +9,7 @@
  */
 import { useMemo, useState } from 'react';
 import { SectionHeader } from './shared';
+import { ExpandArrow } from '../common';
 import { formatBytes } from '../../utils/format';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -535,7 +536,7 @@ function FsCheckCard({ check }: { check: FsCheckResult }) {
       >
         <div className="flex items-center gap-2">
           {hasPhases && (
-            <span className="text-[9px] text-slate-400 dark:text-gray-500">{expanded ? '▼' : '▶'}</span>
+            <ExpandArrow expanded={expanded} className="text-[9px] text-slate-400 dark:text-gray-500" />
           )}
           <span className="font-mono text-blue-600 dark:text-blue-300 text-xs">{check.device}</span>
           <span className="text-slate-400 dark:text-gray-500 text-xs">via</span>

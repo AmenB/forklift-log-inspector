@@ -3,6 +3,8 @@ import type { V2VApiCall, V2VDriveMapping, V2VFstabEntry, V2VFileCopy } from '..
 import { LineLink } from './LineLink';
 import { formatBytes } from '../../utils/format';
 import { OriginBadge } from './shared';
+import { ExpandArrow } from '../common';
+import { useDevMode } from '../../store/useStore';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Cross-tree navigation context
@@ -28,7 +30,6 @@ interface V2VFileTreeProps {
   fileCopies?: V2VFileCopy[];
   driveMappings?: V2VDriveMapping[];
   fstab?: V2VFstabEntry[];
-  guestType?: string;
   /** Path to the VirtIO Win ISO (shown as label for virtio_win handle) */
   virtioWinIsoPath?: string | null;
   /** If true, guest device trees start expanded (but not the VirtIO ISO tree) */
@@ -49,6 +50,19 @@ const FILE_CHECK_APIS = new Set([
   'exists',
   'stat',
   'lstat',
+]);
+
+/** Broader set of file-related APIs shown in per-stage file operation trees. */
+const STAGE_FILE_OPS = new Set([
+  ...FILE_CHECK_APIS,
+  'download', 'upload', 'copy_in', 'copy_out',
+  'read_file', 'read_lines', 'cat',
+  'write', 'write_file', 'write_append',
+  'mkdir', 'mkdir_p',
+  'rm', 'rm_rf', 'rmdir',
+  'chmod', 'chown',
+  'ln_sf', 'ln_s', 'link',
+  'cp', 'cp_a', 'mv', 'rename',
 ]);
 
 /** API function names that establish a mount context. */
@@ -99,6 +113,20 @@ interface MountGroup {
   mountpoint: string;
   chrootPath: string;
   checks: V2VApiCall[];
+  /** Line number of the mount API call (for navigation) */
+  mountLineNumber?: number;
+  /** Line number where this mount cycle ends (umount or next mount) */
+  endLineNumber?: number;
+  /** 1-based pass number when a device is mounted multiple times */
+  pass: number;
+}
+
+interface MergedDeviceGroup {
+  device: string;
+  mountpoint: string;
+  passes: MountGroup[];
+  allChecks: V2VApiCall[];
+  firstMountLineNumber?: number;
 }
 
 interface TreeStats {
@@ -106,6 +134,7 @@ interface TreeStats {
   found: number;
   notFound: number;
   copies: number;
+  scripts: number;
   augeas: number;
 }
 
@@ -183,6 +212,8 @@ function parseAugeasPath(augPath: string): { filePath: string; key: string } | n
 }
 
 function isCheckFound(check: FileCheck): boolean {
+  // Non-check APIs (download, upload, mkdir, etc.) always count as "found" — they operated on the file
+  if (!FILE_CHECK_APIS.has(check.api)) return true;
   if (check.api === 'stat' || check.api === 'lstat') {
     return check.result !== '' && check.result !== '0' && !check.result.startsWith('error');
   }
@@ -209,18 +240,26 @@ function groupByMount(apiCalls: V2VApiCall[]): MountGroup[] {
   let currentMountpoint = '';
   let currentChrootPath = '';
   let currentChecks: V2VApiCall[] = [];
+  let currentMountLine: number | undefined;
 
-  function flush() {
-    if (currentChecks.length > 0 && currentDevice) {
+  function flush(endLine?: number) {
+    if (currentDevice) {
+      const key = `${currentDevice}::${currentMountpoint}`;
+      const passCount = (passCounts.get(key) ?? 0) + 1;
+      passCounts.set(key, passCount);
       groups.push({
         device: currentDevice,
         mountpoint: currentMountpoint,
         chrootPath: currentChrootPath,
         checks: [...currentChecks],
+        mountLineNumber: currentMountLine,
+        endLineNumber: endLine,
+        pass: passCount,
       });
       currentChecks = [];
     }
   }
+  const passCounts = new Map<string, number>();
 
   for (const call of apiCalls) {
     if (MOUNT_APIS.has(call.name)) {
@@ -235,33 +274,25 @@ function groupByMount(apiCalls: V2VApiCall[]): MountGroup[] {
         mountpoint = quoted[1];
       }
       if (device) {
-        if (device !== currentDevice || mountpoint !== currentMountpoint) flush();
+        if (device !== currentDevice || mountpoint !== currentMountpoint) flush(call.lineNumber);
         currentDevice = device;
         currentMountpoint = mountpoint;
         currentChrootPath = extractChrootPath(call);
+        currentMountLine = call.lineNumber;
       }
     } else if (call.name === 'umount_all' || call.name === 'umount') {
-      flush();
+      flush(call.lineNumber);
       currentDevice = '';
       currentMountpoint = '';
       currentChrootPath = '';
+      currentMountLine = undefined;
     } else if (FILE_CHECK_APIS.has(call.name) || isAugeasDataCall(call)) {
       currentChecks.push(call);
     }
   }
   flush();
 
-  const merged = new Map<string, MountGroup>();
-  for (const group of groups) {
-    const key = `${group.device}::${group.mountpoint}`;
-    const existing = merged.get(key);
-    if (existing) {
-      existing.checks.push(...group.checks);
-    } else {
-      merged.set(key, { ...group, checks: [...group.checks] });
-    }
-  }
-  return [...merged.values()];
+  return groups;
 }
 
 function groupNonGuestHandles(apiCalls: V2VApiCall[]): MountGroup[] {
@@ -276,7 +307,7 @@ function groupNonGuestHandles(apiCalls: V2VApiCall[]): MountGroup[] {
   const groups: MountGroup[] = [];
   for (const [handle, checks] of byHandle) {
     if (checks.length > 0) {
-      groups.push({ device: handle, mountpoint: '/', chrootPath: '', checks });
+      groups.push({ device: handle, mountpoint: '/', chrootPath: '', checks, pass: 1 });
     }
   }
   return groups;
@@ -362,19 +393,28 @@ function buildTree(checks: V2VApiCall[], fileCopies: V2VFileCopy[]): TreeNode {
   return root;
 }
 
+function isTrueCopy(op: FileOp): boolean {
+  return op.type === 'copy' && (op.origin === 'virtio_win' || op.origin === 'virt-tools');
+}
+
+function isScriptOp(op: FileOp): boolean {
+  return op.type === 'copy' && (op.origin === 'script' || op.origin === 'guest');
+}
+
 function countStats(node: TreeNode): TreeStats {
   let totalEntries = 0;
   let found = 0;
   let notFound = 0;
   let copies = 0;
+  let scripts = 0;
   let augeas = 0;
 
   const isLeaf = node.children.size === 0;
   if (isLeaf && (node.checks.length > 0 || node.ops.length > 0)) {
     totalEntries = 1;
-    const copyOps = node.ops.filter((op) => op.type === 'copy');
     const augOps = node.ops.filter((op) => op.type === 'augeas');
-    if (copyOps.length > 0) copies = 1;
+    if (node.ops.some(isTrueCopy)) copies = 1;
+    if (node.ops.some(isScriptOp)) scripts = 1;
     if (augOps.length > 0) augeas = augOps.length;
     if (node.checks.length > 0) {
       const anyFound = node.checks.some(isCheckFound);
@@ -389,10 +429,11 @@ function countStats(node: TreeNode): TreeStats {
     found += sub.found;
     notFound += sub.notFound;
     copies += sub.copies;
+    scripts += sub.scripts;
     augeas += sub.augeas;
   }
 
-  return { totalEntries, found, notFound, copies, augeas };
+  return { totalEntries, found, notFound, copies, scripts, augeas };
 }
 
 function isDirectory(node: TreeNode): boolean {
@@ -422,11 +463,14 @@ function buildDeviceLabelMap(
 function getDeviceDisplayInfo(
   device: string,
   labelMap: Map<string, string>,
-  guestType?: string,
+  mountpoint?: string,
 ): { primary: string; secondary: string; icon: string } {
   const label = labelMap.get(device);
   if (label) return { primary: label, secondary: device, icon: '💾' };
-  if (guestType === 'windows') return { primary: 'Virtio-Win ISO', secondary: device, icon: '💿' };
+  // Detect EFI System Partition (ESP): mountpoint often contains "ESP" temp path
+  if (mountpoint && /\bESP[_/]/i.test(mountpoint)) {
+    return { primary: 'EFI System Partition', secondary: device, icon: '⚡' };
+  }
   return { primary: device, secondary: '', icon: '💾' };
 }
 
@@ -466,7 +510,6 @@ export function V2VFileTree({
   fileCopies: rawFileCopies,
   driveMappings,
   fstab,
-  guestType,
   virtioWinIsoPath,
   defaultExpandGuest = false,
 }: V2VFileTreeProps) {
@@ -521,27 +564,102 @@ export function V2VFileTree({
       // No mount groups at all — create a synthetic one if we have file copies
       return [
         ...mountGroups,
-        { device: 'Guest', mountpoint: '/', chrootPath: '', checks: [] as V2VApiCall[] },
+        { device: 'Guest', mountpoint: '/', chrootPath: '', checks: [] as V2VApiCall[], pass: 1 },
       ];
     }
     return mountGroups;
   }, [mountGroups, guestFileCopies.length]);
 
-  const { totalFileChecks, totalAugeasOps } = useMemo(() => {
-    let fileChecks = 0;
-    let augOps = 0;
-    const allGroups = [...enrichedMountGroups, ...handleGroups];
-    for (const g of allGroups) {
-      for (const c of g.checks) {
-        if (AUGEAS_APIS.has(c.name)) augOps++;
-        else fileChecks++;
+  // Merge mount groups that share the same device into a single entry
+  const mergedDeviceGroups = useMemo((): MergedDeviceGroup[] => {
+    const deviceOrder: string[] = [];
+    const deviceMap = new Map<string, MountGroup[]>();
+    for (const group of enrichedMountGroups) {
+      if (!deviceMap.has(group.device)) {
+        deviceOrder.push(group.device);
+        deviceMap.set(group.device, []);
       }
+      deviceMap.get(group.device)!.push(group);
     }
-    return { totalFileChecks: fileChecks, totalAugeasOps: augOps };
-  }, [enrichedMountGroups, handleGroups]);
+    return deviceOrder.map((device) => {
+      const passes = deviceMap.get(device)!;
+      return {
+        device,
+        mountpoint: passes[0].mountpoint,
+        passes,
+        allChecks: passes.flatMap((p) => p.checks),
+        firstMountLineNumber: passes[0].mountLineNumber,
+      };
+    });
+  }, [enrichedMountGroups]);
 
-  const totalDevices = enrichedMountGroups.length + handleGroups.length;
-  const totalOps = totalFileChecks + guestFileCopies.length + totalAugeasOps;
+  // Precompute file copies for each merged device group (also used for summary stats)
+  const deviceGroupsWithCopies = useMemo(() => {
+    return mergedDeviceGroups.map((merged) => {
+      const copies = guestFileCopies.filter((fc) => {
+        const inAnyPass = merged.passes.some((pass) => {
+          if (pass.mountLineNumber === undefined) return true;
+          if (fc.lineNumber < pass.mountLineNumber) return false;
+          if (pass.endLineNumber !== undefined && fc.lineNumber >= pass.endLineNumber) return false;
+          return true;
+        });
+        if (!inAnyPass) return false;
+        const dest = fc.destination;
+        let bestMatch = '';
+        let bestDevice = '';
+        for (const g of enrichedMountGroups) {
+          if (g.mountLineNumber !== undefined) {
+            if (fc.lineNumber < g.mountLineNumber) continue;
+            if (g.endLineNumber !== undefined && fc.lineNumber >= g.endLineNumber) continue;
+          }
+          const mp = g.mountpoint;
+          if (
+            (dest === mp || dest.startsWith(mp === '/' ? '/' : mp + '/')) &&
+            mp.length > bestMatch.length
+          ) {
+            bestMatch = mp;
+            bestDevice = g.device;
+          }
+        }
+        if (!bestMatch) return merged === mergedDeviceGroups[0];
+        return bestDevice === merged.device;
+      });
+      return { merged, copies };
+    });
+  }, [mergedDeviceGroups, guestFileCopies, enrichedMountGroups]);
+
+  // Compute summary stats from the actual trees (consistent with DeviceTree display)
+  const summaryStats = useMemo(() => {
+    let totalEntries = 0, found = 0, notFound = 0, copies = 0, scripts = 0, augeas = 0;
+    for (const { merged, copies: fileCopies } of deviceGroupsWithCopies) {
+      const tree = buildTree(merged.allChecks, fileCopies);
+      const stats = countStats(tree);
+      totalEntries += stats.totalEntries;
+      found += stats.found;
+      notFound += stats.notFound;
+      copies += stats.copies;
+      scripts += stats.scripts;
+      augeas += stats.augeas;
+    }
+    for (const group of handleGroups) {
+      const tree = buildTree(group.checks, []);
+      const stats = countStats(tree);
+      totalEntries += stats.totalEntries;
+      found += stats.found;
+      notFound += stats.notFound;
+      copies += stats.copies;
+      scripts += stats.scripts;
+      augeas += stats.augeas;
+    }
+    return { totalEntries, found, notFound, copies, scripts, augeas };
+  }, [deviceGroupsWithCopies, handleGroups]);
+
+  const totalDevices = new Set([
+    ...enrichedMountGroups.map((g) => g.device),
+    ...handleGroups.map((g) => g.device),
+  ]).size;
+  const totalChecks = summaryStats.found + summaryStats.notFound;
+  const totalOps = summaryStats.totalEntries;
 
   if (totalOps === 0) return null;
 
@@ -554,37 +672,44 @@ export function V2VFileTree({
             {totalOps.toLocaleString()} file operations across {totalDevices} device
             {totalDevices !== 1 ? 's' : ''}
           </span>
-          {totalFileChecks > 0 && (
+          {totalChecks > 0 && (
             <span className="text-indigo-500 dark:text-indigo-400">
-              {totalFileChecks.toLocaleString()} checks
+              {totalChecks.toLocaleString()} checks
             </span>
           )}
-          {guestFileCopies.length > 0 && (
+          {summaryStats.copies > 0 && (
             <span className="text-blue-500 dark:text-blue-400">
-              {guestFileCopies.length.toLocaleString()} copies
+              {summaryStats.copies.toLocaleString()} copied
             </span>
           )}
-          {totalAugeasOps > 0 && (
+          {summaryStats.scripts > 0 && (
+            <span className="text-teal-500 dark:text-teal-400">
+              {summaryStats.scripts.toLocaleString()} {summaryStats.scripts === 1 ? 'script' : 'scripts'}
+            </span>
+          )}
+          {summaryStats.augeas > 0 && (
             <span className="text-violet-500 dark:text-violet-400">
-              {totalAugeasOps.toLocaleString()} config ops
+              {summaryStats.augeas.toLocaleString()} config ops
             </span>
           )}
         </div>
 
-        {/* One tree per mounted guest device */}
-        {enrichedMountGroups.map((group) => {
-          const display = getDeviceDisplayInfo(group.device, deviceLabelMap, guestType);
-          // Attach file copies to the root (/) mount group
-          const copies = group.mountpoint === '/' ? guestFileCopies : [];
+        {/* One tree per device — multiple passes on the same device are merged */}
+        {deviceGroupsWithCopies.map(({ merged, copies }) => {
+          const display = getDeviceDisplayInfo(merged.device, deviceLabelMap, merged.mountpoint);
+          const passLabel = merged.passes.length > 1 ? `(${merged.passes.length} passes)` : '';
+
           return (
             <DeviceTree
-              key={`${group.device}::${group.mountpoint}`}
-              checks={group.checks}
+              key={`device::${merged.device}`}
+              checks={merged.allChecks}
               fileCopies={copies}
               primaryLabel={display.primary}
               secondaryLabel={display.secondary}
+              passLabel={passLabel || undefined}
               icon={display.icon}
               defaultExpanded={defaultExpandGuest}
+              mountLineNumber={merged.firstMountLineNumber}
             />
           );
         })}
@@ -610,6 +735,44 @@ export function V2VFileTree({
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// StageFileOpsTree — lightweight per-stage file operations tree
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Shows file operations that occurred during a single pipeline stage.
+ * Unlike the full V2VFileTree, this doesn't require mount context —
+ * it shows all file-related API calls in a flat tree.
+ */
+export function StageFileOpsTree({
+  apiCalls,
+  fileCopies: rawFileCopies,
+}: {
+  apiCalls: V2VApiCall[];
+  fileCopies?: V2VFileCopy[];
+}) {
+  // Filter to file-related calls only (broader set than FILE_CHECK_APIS)
+  const fileCalls = useMemo(
+    () => apiCalls.filter((c) => STAGE_FILE_OPS.has(c.name) || isAugeasDataCall(c)),
+    [apiCalls],
+  );
+
+  const fileCopies = useMemo(() => dedupeFileCopies(rawFileCopies || []), [rawFileCopies]);
+
+  if (fileCalls.length === 0 && fileCopies.length === 0) return null;
+
+  return (
+    <DeviceTree
+      checks={fileCalls}
+      fileCopies={fileCopies}
+      primaryLabel="File Operations"
+      secondaryLabel=""
+      icon="📂"
+      defaultExpanded
+    />
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // DeviceTree
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -618,20 +781,27 @@ function DeviceTree({
   fileCopies,
   primaryLabel,
   secondaryLabel,
+  passLabel,
   icon = '💾',
   isIsoTree = false,
   defaultExpanded = false,
+  mountLineNumber,
 }: {
   checks: V2VApiCall[];
   fileCopies: V2VFileCopy[];
   primaryLabel: string;
   secondaryLabel: string;
+  /** e.g. "(pass 2)" — shown next to device path in a distinct color */
+  passLabel?: string;
   icon?: string;
   /** If true, this tree participates in cross-tree ISO navigation */
   isIsoTree?: boolean;
   /** If true, the tree starts expanded */
   defaultExpanded?: boolean;
+  /** Line number of the mount API call, for navigation */
+  mountLineNumber?: number;
 }) {
+  const devMode = useDevMode();
   const [expanded, setExpanded] = useState(defaultExpanded);
   const tree = useMemo(() => buildTree(checks, fileCopies), [checks, fileCopies]);
   const stats = useMemo(() => countStats(tree), [tree]);
@@ -648,14 +818,15 @@ function DeviceTree({
 
   return (
     <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-      <button
+      <div
         onClick={() => setExpanded(!expanded)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!expanded); } }}
         aria-expanded={expanded}
-        className="w-full flex items-center gap-3 px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left"
+        className="w-full flex items-center gap-3 px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left cursor-pointer"
       >
-        <span className="text-[10px] text-indigo-500 dark:text-indigo-400 flex-shrink-0">
-          {expanded ? '▼' : '▶'}
-        </span>
+        <ExpandArrow expanded={expanded} className="text-[10px] text-indigo-500 dark:text-indigo-400 flex-shrink-0" />
         <span className="text-sm">{icon}</span>
         <span className="text-xs font-semibold text-slate-800 dark:text-gray-200">
           {primaryLabel}
@@ -663,6 +834,11 @@ function DeviceTree({
         {secondaryLabel && (
           <span className="text-[10px] font-mono text-slate-400 dark:text-gray-500">
             {secondaryLabel}
+          </span>
+        )}
+        {devMode && passLabel && (
+          <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">
+            {passLabel}
           </span>
         )}
 
@@ -685,13 +861,23 @@ function DeviceTree({
               {stats.copies.toLocaleString()} copied
             </span>
           )}
+          {stats.scripts > 0 && (
+            <span className="text-teal-500 dark:text-teal-400">
+              {stats.scripts.toLocaleString()} {stats.scripts === 1 ? 'script' : 'scripts'}
+            </span>
+          )}
           {stats.augeas > 0 && (
             <span className="text-violet-500 dark:text-violet-400">
               {stats.augeas.toLocaleString()} config ops
             </span>
           )}
+          {mountLineNumber !== undefined && (
+            <span onClick={(e) => e.stopPropagation()}>
+              <LineLink line={mountLineNumber} />
+            </span>
+          )}
         </span>
-      </button>
+      </div>
 
       {expanded && (
         <div className="max-h-[500px] overflow-y-auto font-mono text-[11px] py-1 px-2">
@@ -820,13 +1006,9 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
         `}
       >
         {isDir ? (
-          <span className="text-[9px] text-indigo-500 dark:text-indigo-400 w-3 text-center flex-shrink-0">
-            {expanded ? '▼' : '▶'}
-          </span>
+          <ExpandArrow expanded={expanded} className="text-[9px] text-indigo-500 dark:text-indigo-400 w-3 text-center flex-shrink-0" />
         ) : isExpandableLeaf ? (
-          <span className="text-[9px] text-slate-400 w-3 text-center flex-shrink-0">
-            {showDetails ? '▼' : '▶'}
-          </span>
+          <ExpandArrow expanded={showDetails} className="text-[9px] text-slate-400 w-3 text-center flex-shrink-0" />
         ) : (
           <span className="w-3 flex-shrink-0" />
         )}
@@ -921,6 +1103,11 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
             {stats.copies > 0 && (
               <span className="text-blue-500 dark:text-blue-400 ml-1">
                 {stats.copies} copied
+              </span>
+            )}
+            {stats.scripts > 0 && (
+              <span className="text-teal-500 dark:text-teal-400 ml-1">
+                {stats.scripts} {stats.scripts === 1 ? 'script' : 'scripts'}
               </span>
             )}
             {stats.augeas > 0 && (

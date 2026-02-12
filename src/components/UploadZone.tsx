@@ -6,6 +6,7 @@ import { parseLogFile, parsePlanYaml, isYamlContent, isV2VLog, parseV2VLog, deco
 import { processArchive } from '../parser/archiveProcessor';
 import { mergeResults } from '../parser/mergeResults';
 import type { ParsedData } from '../types';
+import type { V2VParsedData } from '../types/v2v';
 
 /** Extensions for plain text files handled directly */
 const PLAIN_EXTENSIONS = ['.log', '.logs', '.txt', '.json', '.yaml', '.yml'];
@@ -97,6 +98,7 @@ export function UploadZone() {
       const logContents: string[] = [];
       const yamlContents: string[] = [];
       const v2vContents: string[] = [];
+      const archiveV2VResults: V2VParsedData[] = [];
       const archiveParsedResults: ParsedData[] = [];
       let archiveLogCount = 0;
       let archiveYamlCount = 0;
@@ -110,6 +112,10 @@ export function UploadZone() {
 
           if (result.logFiles.length > 0 || result.yamlFiles.length > 0) {
             archiveParsedResults.push(result.parsedData);
+          }
+
+          if (result.v2vData) {
+            archiveV2VResults.push(result.v2vData);
           }
         } else {
           // ── Plain file (or gzip-compressed plain file) ────────────
@@ -137,17 +143,47 @@ export function UploadZone() {
       }
 
       // ── V2V logs: parse and store separately ────────────────────────
-      if (v2vContents.length > 0) {
-        const v2vResult = parseV2VLog(v2vContents.join('\n'));
-        // Attach the uploaded file name(s)
-        const v2vFileNames = valid.filter(f => !isArchiveFile(f.name)).map(f => f.name);
-        v2vResult.fileName = v2vFileNames.join(', ');
+      const hasV2V = v2vContents.length > 0 || archiveV2VResults.length > 0;
+      if (hasV2V) {
+        let v2vResult: V2VParsedData;
+
+        if (v2vContents.length > 0) {
+          // Plain v2v files — parse them
+          v2vResult = parseV2VLog(v2vContents.join('\n'));
+          const v2vFileNames = valid.filter(f => !isArchiveFile(f.name)).map(f => f.name);
+          v2vResult.fileName = v2vFileNames.join(', ');
+
+          // Merge archive v2v results by appending tool runs
+          for (const archiveV2V of archiveV2VResults) {
+            v2vResult.toolRuns.push(...archiveV2V.toolRuns);
+            v2vResult.totalLines += archiveV2V.totalLines;
+            if (archiveV2V.fileName) {
+              v2vResult.fileName = v2vResult.fileName
+                ? `${v2vResult.fileName}, ${archiveV2V.fileName}`
+                : archiveV2V.fileName;
+            }
+          }
+        } else {
+          // Only archive v2v results
+          v2vResult = archiveV2VResults[0];
+          for (let i = 1; i < archiveV2VResults.length; i++) {
+            v2vResult.toolRuns.push(...archiveV2VResults[i].toolRuns);
+            v2vResult.totalLines += archiveV2VResults[i].totalLines;
+            if (archiveV2VResults[i].fileName) {
+              v2vResult.fileName = v2vResult.fileName
+                ? `${v2vResult.fileName}, ${archiveV2VResults[i].fileName}`
+                : archiveV2VResults[i].fileName;
+            }
+          }
+        }
+
         useV2VStore.getState().setV2VData(v2vResult);
 
         const stageCount = v2vResult.toolRuns.reduce((sum, r) => sum + r.stages.length, 0);
         const errorCount = v2vResult.toolRuns.reduce((sum, r) => sum + r.errors.filter(e => e.level === 'error').length, 0);
+        const v2vFileCount = v2vContents.length + archiveV2VResults.length;
         showToast(
-          `Processed ${v2vContents.length} v2v log file${v2vContents.length !== 1 ? 's' : ''}: ${v2vResult.toolRuns.length} tool run${v2vResult.toolRuns.length !== 1 ? 's' : ''}, ${stageCount} stages, ${errorCount} error${errorCount !== 1 ? 's' : ''}`,
+          `Processed ${v2vFileCount} v2v log file${v2vFileCount !== 1 ? 's' : ''}: ${v2vResult.toolRuns.length} tool run${v2vResult.toolRuns.length !== 1 ? 's' : ''}, ${stageCount} stages, ${errorCount} error${errorCount !== 1 ? 's' : ''}`,
           'success',
         );
 

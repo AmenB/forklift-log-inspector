@@ -18,14 +18,41 @@ export { isWindowsConversionContent };
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function WindowsConversionView({ content, toolRun }: { content: string[]; toolRun?: V2VToolRun }) {
+export function WindowsConversionView({
+  content,
+  toolRun,
+  stageStartLine,
+  stageEndLine,
+}: {
+  content: string[];
+  toolRun?: V2VToolRun;
+  stageStartLine?: number;
+  stageEndLine?: number;
+}) {
   const parsed = useMemo(() => parseWindowsConversion(content), [content]);
 
-  // Build rich registry hive groups from toolRun data
+  // Filter registry hive accesses to this stage's line range when available
+  const stageHiveAccesses = useMemo(() => {
+    if (!toolRun || stageStartLine === undefined || stageEndLine === undefined) return toolRun?.registryHiveAccesses ?? [];
+    return toolRun.registryHiveAccesses.filter((a) => a.lineNumber >= stageStartLine && a.lineNumber < stageEndLine);
+  }, [toolRun, stageStartLine, stageEndLine]);
+
+  // Build rich registry hive groups from filtered data
   const hiveGroups = useMemo(
-    () => (toolRun?.registryHiveAccesses ? groupHiveAccesses(toolRun.registryHiveAccesses) : []),
-    [toolRun?.registryHiveAccesses],
+    () => groupHiveAccesses(stageHiveAccesses),
+    [stageHiveAccesses],
   );
+
+  // Filter API calls and file copies to this stage's line range when available
+  const stageApiCalls = useMemo(() => {
+    if (!toolRun || stageStartLine === undefined || stageEndLine === undefined) return toolRun?.apiCalls ?? [];
+    return toolRun.apiCalls.filter((c) => c.lineNumber >= stageStartLine && c.lineNumber < stageEndLine);
+  }, [toolRun, stageStartLine, stageEndLine]);
+
+  const stageFileCopies = useMemo(() => {
+    if (!toolRun || stageStartLine === undefined || stageEndLine === undefined) return toolRun?.virtioWin.fileCopies ?? [];
+    return toolRun.virtioWin.fileCopies.filter((fc) => fc.lineNumber >= stageStartLine && fc.lineNumber < stageEndLine);
+  }, [toolRun, stageStartLine, stageEndLine]);
 
   const hasData =
     parsed.conversionModule ||
@@ -37,9 +64,9 @@ export function WindowsConversionView({ content, toolRun }: { content: string[];
 
   // Determine if V2VFileTree has data to show
   const hasFileTreeData = toolRun && (
-    toolRun.apiCalls.some((c) =>
+    stageApiCalls.some((c) =>
       ['is_file', 'is_dir', 'is_symlink', 'is_blockdev', 'is_chardev', 'exists', 'stat', 'lstat'].includes(c.name),
-    ) || toolRun.virtioWin.fileCopies.length > 0
+    ) || stageFileCopies.length > 0
   );
 
   return (
@@ -55,7 +82,7 @@ export function WindowsConversionView({ content, toolRun }: { content: string[];
           <SectionHeader title="Registry Hive Operations" />
           <div className="text-xs text-slate-500 dark:text-gray-400 mb-2">
             {hiveGroups.length} registry hive{hiveGroups.length !== 1 ? 's' : ''} accessed
-            ({toolRun!.registryHiveAccesses.length} key path{toolRun!.registryHiveAccesses.length !== 1 ? 's' : ''} traversed)
+            ({stageHiveAccesses.length} key path{stageHiveAccesses.length !== 1 ? 's' : ''} traversed)
           </div>
           <div className="space-y-2">
             {hiveGroups.map((group) => (
@@ -70,16 +97,15 @@ export function WindowsConversionView({ content, toolRun }: { content: string[];
         <WarningsSection warnings={parsed.warnings} />
       )}
 
-      {/* File Operations — V2VFileTree with mounted disks */}
+      {/* File Operations — V2VFileTree with mounted disks (filtered to this stage) */}
       {hasFileTreeData && toolRun && (
         <div>
           <SectionHeader title="File Operations" />
           <V2VFileTree
-            apiCalls={toolRun.apiCalls}
-            fileCopies={toolRun.virtioWin.fileCopies}
+            apiCalls={stageApiCalls}
+            fileCopies={stageFileCopies}
             driveMappings={toolRun.guestInfo?.driveMappings}
             fstab={toolRun.guestInfo?.fstab}
-            guestType={toolRun.guestInfo?.type}
             virtioWinIsoPath={toolRun.virtioWin?.isoPath}
             defaultExpandGuest
           />

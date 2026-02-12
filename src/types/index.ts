@@ -95,12 +95,15 @@ export interface VMError {
   reasons: string[];
 }
 
+export type TransferMethod = 'StorageOffload' | 'Unknown';
+
 export interface VM {
   id: string;
   name: string;
   currentPhase: string;
   currentStep: string;
   migrationType: MigrationType;
+  transferMethod: TransferMethod;
   phaseHistory: PhaseInfo[];
   dataVolumes: DataVolume[];
   createdResources: CreatedResource[];
@@ -245,8 +248,12 @@ export interface ArchiveResult {
   logFiles: string[];
   /** Paths of files identified as Plan YAML resources */
   yamlFiles: string[];
+  /** Paths of files identified as virt-v2v logs */
+  v2vFiles: string[];
   /** The merged ParsedData ready for the store */
   parsedData: ParsedData;
+  /** Parsed v2v data (if v2v logs were found in the archive) */
+  v2vData?: import('../types/v2v').V2VParsedData;
 }
 
 // Log entry as parsed from JSON
