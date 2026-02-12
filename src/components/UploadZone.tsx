@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, DragEvent, ChangeEvent } from 'react';
 import { useStore } from '../store/useStore';
 import { useV2VStore } from '../store/useV2VStore';
 import { useToast } from './Toast';
-import { parseLogFile, parsePlanYaml, isYamlContent, isV2VLog, parseV2VLog } from '../parser';
+import { parseLogFile, parsePlanYaml, isYamlContent, isV2VLog, parseV2VLog, decompressGzipToText } from '../parser';
 import { processArchive } from '../parser/archiveProcessor';
 import { mergeResults } from '../parser/mergeResults';
 import type { ParsedData } from '../types';
@@ -27,10 +27,26 @@ function isArchiveFile(name: string): boolean {
 }
 
 /**
- * Check if a filename has a valid (plain or archive) extension.
+ * Detect whether a filename is a gzip-compressed plain file (not a tar archive).
+ * Matches patterns like `.log.gz`, `.logs.gz`, `.txt.gz`, `.json.gz`, `.yaml.gz`, `.yml.gz`.
+ */
+function isGzipPlainFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (!lower.endsWith('.gz')) return false;
+  // Exclude tar archives
+  if (lower.endsWith('.tar.gz')) return false;
+  // Check the extension before .gz
+  const withoutGz = lower.slice(0, -3);
+  const ext = withoutGz.slice(withoutGz.lastIndexOf('.'));
+  return PLAIN_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Check if a filename has a valid (plain, gzipped, or archive) extension.
  */
 function isValidFile(name: string): boolean {
   if (isArchiveFile(name)) return true;
+  if (isGzipPlainFile(name)) return true;
   const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
   return PLAIN_EXTENSIONS.includes(ext);
 }
@@ -63,7 +79,7 @@ export function UploadZone() {
     const invalid = files.filter(f => !isValidFile(f.name));
     if (invalid.length > 0) {
       showToast(
-        `Skipped ${invalid.length} invalid file${invalid.length !== 1 ? 's' : ''}. Allowed: ${[...PLAIN_EXTENSIONS, '.tar', '.tar.gz', '.tgz'].join(', ')}`,
+        `Skipped ${invalid.length} invalid file${invalid.length !== 1 ? 's' : ''}. Allowed: ${[...PLAIN_EXTENSIONS, '.log.gz', '.tar', '.tar.gz', '.tgz'].join(', ')}`,
         'error',
       );
     }
@@ -96,8 +112,15 @@ export function UploadZone() {
             archiveParsedResults.push(result.parsedData);
           }
         } else {
-          // ── Plain file ────────────────────────────────────────────
-          const content = await file.text();
+          // ── Plain file (or gzip-compressed plain file) ────────────
+          const content = isGzipPlainFile(file.name)
+            ? await decompressGzipToText(file)
+            : await file.text();
+
+          // Use the inner filename (without .gz) for type detection
+          const effectiveName = isGzipPlainFile(file.name)
+            ? file.name.slice(0, -3)
+            : file.name;
 
           // NEW: detect v2v log and route to separate pipeline
           if (isV2VLog(content)) {
@@ -105,7 +128,7 @@ export function UploadZone() {
             continue;
           }
 
-          if (isYamlFile(file.name, content)) {
+          if (isYamlFile(effectiveName, content)) {
             yamlContents.push(content);
           } else {
             logContents.push(content);
@@ -248,7 +271,7 @@ export function UploadZone() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".log,.logs,.txt,.json,.yaml,.yml,.tar,.tar.gz,.tgz"
+          accept=".log,.logs,.txt,.json,.yaml,.yml,.gz,.tar,.tar.gz,.tgz"
           onChange={handleFileInputChange}
           className="hidden"
         />
@@ -280,7 +303,7 @@ export function UploadZone() {
               Upload forklift logs, virt-v2v/inspector logs, Plan YAMLs, and archives
             </p>
             <p className="text-slate-500 dark:text-gray-400 text-xs mt-1">
-              .log, .logs, .txt, .json, .yaml, .yml, .tar, .tar.gz, .tgz
+              .log, .logs, .txt, .json, .yaml, .yml, .log.gz, .tar, .tar.gz, .tgz
             </p>
           </>
         )}

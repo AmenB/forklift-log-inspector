@@ -1,6 +1,6 @@
 export { parseLogFile, LogStore } from './logParser';
 export { parsePlanYaml, isYamlContent } from './planYamlParser';
-export { extractArchive } from './tarExtractor';
+export { extractArchive, decompressGzipToText } from './tarExtractor';
 export { processArchive } from './archiveProcessor';
 export { mergeResults } from './mergeResults';
 export * from './constants';

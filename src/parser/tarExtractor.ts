@@ -391,7 +391,54 @@ function parseTarBytes(bytes: Uint8Array, pathPrefix: string): TarEntry[] {
   return entries;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Public Helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Decompress a gzipped file (non-tar) and return the text content.
+ * Uses the native DecompressionStream API.
+ */
+export async function decompressGzipToText(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+
+  if (!isGzip(bytes)) {
+    // Not actually gzipped — decode as plain text
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  const inputStream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+
+  const decompressed = inputStream.pipeThrough(
+    new DecompressionStream('gzip') as unknown as TransformStream<Uint8Array, Uint8Array>,
+  );
+
+  const reader = decompressed.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalLength = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    totalLength += value.length;
+  }
+
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return new TextDecoder('utf-8').decode(result);
+}
+
+// ── Internal Helpers ──────────────────────────────────────────────────────
 
 function isGzip(bytes: Uint8Array): boolean {
   return (
