@@ -449,7 +449,7 @@ function DiskCard({ disk, partTableType }: { disk: DiskLayout; partTableType?: s
 
   return (
     <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-      <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2 flex-wrap">
+      <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 flex items-baseline gap-2 flex-wrap">
         <span className="font-mono text-[11px] font-semibold text-slate-700 dark:text-gray-200">{disk.device}</span>
         <span className="text-[10px] text-slate-500 dark:text-gray-400">{formatBytes(disk.sizeBytes)}</span>
         {tableType && (
@@ -475,7 +475,7 @@ function DiskCard({ disk, partTableType }: { disk: DiskLayout; partTableType?: s
       {disk.partitions.length > 0 && (
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {disk.partitions.map((pt) => (
-            <div key={pt.number} className="px-3 py-1.5 flex items-center gap-2 text-[11px]">
+            <div key={pt.number} className="px-3 py-1.5 flex items-baseline gap-2 text-[11px]">
               <span className="font-mono text-slate-600 dark:text-gray-300 w-6 text-right">{pt.number}</span>
               <span className="text-slate-500 dark:text-gray-400 w-16 text-right">{formatBytes(pt.sizeBytes)}</span>
               {pt.fsType && (

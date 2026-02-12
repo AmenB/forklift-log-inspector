@@ -390,7 +390,7 @@ function DiskLayoutSection({
           return (
             <div key={disk.device} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
               {/* Disk header */}
-              <div className="flex items-center gap-3 px-3 py-2 bg-slate-50 dark:bg-slate-800/50">
+              <div className="flex items-baseline gap-3 px-3 py-2 bg-slate-50 dark:bg-slate-800/50">
                 <span className="font-mono text-xs font-semibold text-slate-700 dark:text-gray-200">
                   {disk.device}
                 </span>

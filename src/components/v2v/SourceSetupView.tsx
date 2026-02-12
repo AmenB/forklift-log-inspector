@@ -309,7 +309,7 @@ function VmSection({
       <SectionHeader title="Source VM (Libvirt)" />
       <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
         {/* Header */}
-        <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2 flex-wrap">
+        <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 flex items-baseline gap-2 flex-wrap">
           <span className="text-xs font-semibold text-slate-700 dark:text-gray-200">
             {vm.name}
           </span>
@@ -376,7 +376,7 @@ function VmSection({
           <div className="px-3 py-2 border-t border-slate-100 dark:border-slate-800">
             <span className="text-[10px] text-slate-400 dark:text-gray-500 font-semibold uppercase">Disks</span>
             {disks.map((d, i) => (
-              <div key={i} className="flex items-center gap-2 text-[11px] pl-2 mt-0.5">
+              <div key={i} className="flex items-baseline gap-2 text-[11px] pl-2 mt-0.5">
                 <span className="font-mono text-slate-600 dark:text-gray-300">{d.target}</span>
                 <span className="px-1 py-0 rounded bg-slate-100 dark:bg-slate-800 text-[9px] text-slate-500 dark:text-gray-400">
                   {d.bus}
@@ -409,7 +409,7 @@ function VmSection({
           <div className="px-3 py-2 border-t border-slate-100 dark:border-slate-800">
             <span className="text-[10px] text-slate-400 dark:text-gray-500 font-semibold uppercase">Network Adapters</span>
             {nics.map((nic, i) => (
-              <div key={i} className="flex items-center gap-2 text-[11px] pl-2 mt-0.5">
+              <div key={i} className="flex items-baseline gap-2 text-[11px] pl-2 mt-0.5">
                 <span className="font-mono text-[10px] text-slate-600 dark:text-gray-300">{nic.mac}</span>
                 <span className="px-1 py-0 rounded bg-slate-100 dark:bg-slate-800 text-[9px] text-slate-500 dark:text-gray-400">
                   {nic.model}

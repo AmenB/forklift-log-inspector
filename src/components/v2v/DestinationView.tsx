@@ -334,7 +334,7 @@ function VmPlanSection({ plan, nics }: { plan: VmPlan; nics: NicEntry[] }) {
           <div className="px-3 py-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
             <span className="text-[10px] text-slate-400 dark:text-gray-500 font-semibold uppercase">Network Adapters</span>
             {nics.map((nic, idx) => (
-              <div key={idx} className="flex items-center gap-2 text-[11px] pl-2">
+              <div key={idx} className="flex items-baseline gap-2 text-[11px] pl-2">
                 <span className="text-slate-600 dark:text-gray-300">{nic.bridge}</span>
                 <span className="font-mono text-[10px] text-slate-500 dark:text-gray-400">{nic.mac}</span>
                 <span className="px-1 py-0 rounded bg-slate-100 dark:bg-slate-800 text-[9px] text-slate-500 dark:text-gray-400">
@@ -446,7 +446,7 @@ function FsUsageSection({ usage }: { usage: FsUsage }) {
     <div>
       <SectionHeader title="Destination Storage" />
       <div className="border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2">
-        <div className="flex items-center justify-between text-[11px] mb-1.5">
+        <div className="flex items-baseline justify-between text-[11px] mb-1.5">
           <span className="font-mono text-[10px] text-slate-600 dark:text-gray-300 truncate max-w-[300px]" title={usage.filesystem}>
             {usage.mountPoint}
           </span>

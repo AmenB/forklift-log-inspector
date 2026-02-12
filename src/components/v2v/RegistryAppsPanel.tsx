@@ -266,7 +266,7 @@ function KeyPathRow({ access }: {
     <div className={isWrite ? 'bg-orange-50/40 dark:bg-orange-900/5' : ''}>
       <div
         onClick={hasValues ? () => setShowValues(!showValues) : undefined}
-        className={`flex items-center gap-2 px-3 py-1.5 text-xs ${
+        className={`flex items-baseline gap-2 px-3 py-1.5 text-xs ${
           hasValues ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/30' : ''
         } transition-colors`}
       >

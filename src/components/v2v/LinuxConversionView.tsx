@@ -236,12 +236,12 @@ function PackageOpsSection({ ops }: { ops: PackageOperation[] }) {
       <SectionHeader title="Package Removal" />
       {ops.map((op, idx) => (
         <div key={idx} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden mb-2">
-          <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
-            <div className="flex items-center gap-2 min-w-0">
+          <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 flex items-baseline justify-between border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-baseline gap-2 min-w-0">
               <Badge color="slate">{op.manager}</Badge>
               <span className="font-mono text-[10px] text-slate-600 dark:text-gray-300 truncate">{op.command}</span>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-baseline gap-2 flex-shrink-0">
               {op.freedSpace && (
                 <Badge color="green">Freed: {op.freedSpace}</Badge>
               )}

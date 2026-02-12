@@ -1000,7 +1000,7 @@ function CopySourceRow({ op }: { op: FileOp }) {
     : op.source;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50">
+    <div className="flex items-baseline gap-2 px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50">
       <span className="text-slate-400 dark:text-gray-500 flex-shrink-0">from</span>
       <OriginBadge origin={op.origin} />
       {isVirtioWin ? (
@@ -1053,8 +1053,8 @@ function AugeasOpRow({ op }: { op: FileOp }) {
   const displayValue = value.length > 120 ? value.slice(0, 117) + '...' : value;
 
   return (
-    <div className="flex items-start gap-2 px-3 py-1 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-      <span className={`text-[8px] px-1.5 py-0 rounded font-bold flex-shrink-0 mt-0.5 ${style}`}>
+    <div className="flex items-baseline gap-2 px-3 py-1 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+      <span className={`text-[8px] px-1.5 py-0 rounded font-bold flex-shrink-0 ${style}`}>
         {opLabel}
       </span>
       {op.augKey && (

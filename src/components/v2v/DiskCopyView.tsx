@@ -137,7 +137,7 @@ function DiskInfoSection({ inputDisk, outputDisk }: { inputDisk: NbdInfoDisk | n
 function DiskInfoCard({ disk, direction }: { disk: NbdInfoDisk; direction: string }) {
   return (
     <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50">
+      <div className="flex items-baseline gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50">
         <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
           direction === 'Input'
             ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'

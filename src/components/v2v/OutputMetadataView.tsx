@@ -420,7 +420,7 @@ export function OutputMetadataView({ content }: { content: string[] }) {
               return (
                 <span
                   key={key}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-gray-300 border border-slate-200 dark:border-slate-700"
+                  className="inline-flex items-baseline gap-1 px-1.5 py-0.5 rounded text-[10px] bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-gray-300 border border-slate-200 dark:border-slate-700"
                   title={key}
                 >
                   <span className="text-slate-400 dark:text-gray-500">{shortKey}:</span>

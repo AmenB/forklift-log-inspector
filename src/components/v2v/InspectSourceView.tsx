@@ -133,7 +133,7 @@ function DiskLayoutSection({
             className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden"
           >
             {/* Disk header */}
-            <div className="flex items-center gap-3 px-3 py-2 bg-slate-50 dark:bg-slate-800/50">
+            <div className="flex items-baseline gap-3 px-3 py-2 bg-slate-50 dark:bg-slate-800/50">
               <span className="font-mono text-xs font-semibold text-slate-700 dark:text-gray-200">
                 {disk.device}
               </span>
@@ -208,7 +208,7 @@ function DiskLayoutSection({
 
         {/* LVM Volumes */}
         {lvmVolumes.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-[10px] text-slate-400 dark:text-gray-500 font-semibold uppercase">
               LVM:
             </span>
@@ -252,10 +252,10 @@ function InspectionStepsSection({ steps }: { steps: InspectionStep[] }) {
         {steps.map((step, idx) => (
           <div
             key={idx}
-            className="flex items-center gap-2 text-[11px]"
+            className="flex items-baseline gap-2 text-[11px]"
           >
             {/* Step indicator */}
-            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 flex-shrink-0" />
+            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 flex-shrink-0 translate-y-[5px]" />
 
             {/* Device */}
             <span className="font-mono font-medium text-slate-700 dark:text-gray-200 min-w-[110px]">
@@ -294,7 +294,7 @@ function BootDeviceSection({ info }: { info: BootDeviceInfo }) {
       <SectionHeader title="Boot Device" />
       <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 space-y-2">
         {info.device && (
-          <div className="flex items-center gap-2 text-[11px]">
+          <div className="flex items-baseline gap-2 text-[11px]">
             <span className="text-slate-400 dark:text-gray-500">Boot filesystem on:</span>
             <span className="font-mono font-medium text-slate-700 dark:text-gray-200">{info.device}</span>
           </div>
@@ -315,7 +315,7 @@ function BootDeviceSection({ info }: { info: BootDeviceInfo }) {
           <div className="space-y-0.5">
             <span className="text-[10px] text-slate-400 dark:text-gray-500 font-semibold uppercase">Mount Points</span>
             {info.mountPoints.map((mp, idx) => (
-              <div key={idx} className="flex items-center gap-2 text-[11px] pl-2">
+              <div key={idx} className="flex items-baseline gap-2 text-[11px] pl-2">
                 <span className="font-mono text-slate-600 dark:text-gray-300 min-w-[130px]">{mp.device}</span>
                 <span className="text-slate-400 dark:text-gray-500">{'\u2192'}</span>
                 <span className="font-mono text-slate-700 dark:text-gray-200">{mp.mountpoint}</span>

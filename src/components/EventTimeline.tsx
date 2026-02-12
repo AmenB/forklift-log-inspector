@@ -143,7 +143,7 @@ export function EventTimeline({ events }: EventTimelineProps) {
                   <div className={`rounded-lg border ${style.border} ${style.bg} px-4 py-2.5`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex items-baseline gap-2 flex-wrap">
                           <span className={`text-xs font-semibold uppercase tracking-wider ${style.icon}`}>
                             {event.type.replace(/-/g, ' ')}
                           </span>

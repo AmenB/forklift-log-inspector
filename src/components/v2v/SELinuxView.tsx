@@ -120,9 +120,9 @@ function ConfigSection({ config }: { config: SELinuxConfig }) {
     <div>
       <SectionHeader title="SELinux Configuration" />
       <div className="border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-baseline gap-3 flex-wrap">
           {mode && (
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${modeColor}`}>
+            <span className={`inline-flex items-baseline gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${modeColor}`}>
               SELINUX: {mode}
             </span>
           )}
@@ -429,7 +429,7 @@ function RelabelTreeNodeRow({ node, depth }: { node: RelabelTreeNode; depth: num
         onClick={isDir ? () => setExpanded(!expanded) : undefined}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         className={`
-          flex items-center gap-1.5 py-[2px] text-[11px] transition-colors
+          flex items-baseline gap-1.5 py-[2px] text-[11px] transition-colors
           ${isDir ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}
         `}
       >

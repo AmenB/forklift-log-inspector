@@ -254,7 +254,7 @@ function ApplianceSection({ config }: { config: ApplianceConfig }) {
       <SectionHeader title="Libguestfs Appliance VM" />
       <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
         {/* Summary badges */}
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50">
+        <div className="flex flex-wrap items-baseline gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50">
           {config.memsize > 0 && (
             <span className="px-2 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 text-[10px] font-medium">
               Memory: {config.memsize} MB
@@ -284,7 +284,7 @@ function ApplianceSection({ config }: { config: ApplianceConfig }) {
         {config.drives.length > 0 && (
           <div className="px-3 py-2 space-y-1 border-t border-slate-100 dark:border-slate-800">
             {config.drives.map((d, idx) => (
-              <div key={idx} className="flex items-center gap-2 text-[11px]">
+              <div key={idx} className="flex items-baseline gap-2 text-[11px]">
                 <span className="text-slate-400 dark:text-gray-500 w-8">hd{idx}</span>
                 <span className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-[10px] font-mono">
                   {d.protocol}
@@ -343,7 +343,7 @@ function NbdkitSection({ conns }: { conns: NbdkitConn[] }) {
                 : 'border-slate-200 dark:border-slate-700'
             }`}
           >
-            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50 flex-wrap">
+            <div className="flex items-baseline gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50 flex-wrap">
               <span className="text-[10px] text-slate-400 dark:text-gray-500">#{idx + 1}</span>
               <span className="font-mono text-[11px] text-slate-700 dark:text-gray-200 truncate max-w-[400px]">
                 {conn.vmdk}

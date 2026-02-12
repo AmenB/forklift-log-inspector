@@ -558,7 +558,7 @@ function StageHostCommands({ commands }: { commands: V2VHostCommand[] }) {
       {expanded && (
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {commands.map((cmd, idx) => (
-            <div key={idx} className="flex items-start gap-2 px-4 py-1.5 text-[11px]">
+            <div key={idx} className="flex items-baseline gap-2 px-4 py-1.5 text-[11px]">
               <span className="flex-shrink-0 font-mono text-slate-400 dark:text-gray-500 w-5 text-right">
                 {idx + 1}
               </span>
