@@ -313,8 +313,8 @@ export function parseLinuxConversion(lines: string[]): ParsedLinuxConversion {
     if (fstabMatch && line.includes('aug_get') && line.includes('fstab')) {
       result.boot.fstabEntries.push({ spec: fstabMatch[1] });
     }
-    // Simpler: pick them from aug_get for /files/etc/fstab/*/spec
-    if (line.includes('/files/etc/fstab/') && line.includes('/spec') && line.includes('aug_get =')) {
+    // Simpler: pick them from aug_get for /files/etc/fstab/*/spec or /file/etc/fstab/*/spec
+    if ((line.includes('/files/etc/fstab/') || line.includes('/file/etc/fstab/')) && line.includes('/spec') && line.includes('aug_get =')) {
       const specVal = line.match(/aug_get = "(.+?)"/);
       if (specVal) {
         result.boot.fstabEntries.push({ spec: specVal[1] });

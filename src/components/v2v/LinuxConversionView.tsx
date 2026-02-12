@@ -16,7 +16,7 @@ import type {
 } from '../../parser/v2v';
 import { parseLinuxConversion, isLinuxConversionContent } from '../../parser/v2v';
 import type { V2VToolRun } from '../../types/v2v';
-import { SectionHeader } from './shared';
+import { SectionHeader, Badge } from './shared';
 import { V2VFileTree } from './V2VFileTree';
 
 /** Re-export for consumers that import from this component file. */
@@ -57,11 +57,11 @@ export function LinuxConversionView({
 
   if (!hasData) return null;
 
-  // Determine if V2VFileTree has data to show
+  // Determine if V2VFileTree has data to show (file checks, augeas ops, or file copies)
+  const FILE_TREE_APIS = ['is_file', 'is_dir', 'is_symlink', 'is_blockdev', 'is_chardev', 'exists', 'stat', 'lstat',
+    'aug_get', 'aug_set', 'aug_rm', 'aug_match', 'aug_clear', 'aug_ls'];
   const hasFileTreeData = toolRun && (
-    stageApiCalls.some((c) =>
-      ['is_file', 'is_dir', 'is_symlink', 'is_blockdev', 'is_chardev', 'exists', 'stat', 'lstat'].includes(c.name),
-    ) || stageFileCopies.length > 0
+    stageApiCalls.some((c) => FILE_TREE_APIS.includes(c.name)) || stageFileCopies.length > 0
   );
 
   return (
@@ -69,6 +69,21 @@ export function LinuxConversionView({
       {/* Conversion Summary + Guest Capabilities */}
       {(parsed.conversionModule || parsed.guestCaps || parsed.osDetected) && (
         <SummarySection parsed={parsed} />
+      )}
+
+      {/* File Operations — V2VFileTree with mounted disks (filtered to this stage) */}
+      {hasFileTreeData && toolRun && (
+        <div>
+          <SectionHeader title="File Operations" />
+          <V2VFileTree
+            apiCalls={stageApiCalls}
+            fileCopies={stageFileCopies}
+            driveMappings={toolRun.guestInfo?.driveMappings}
+            fstab={toolRun.guestInfo?.fstab}
+            virtioWinIsoPath={toolRun.virtioWin?.isoPath}
+            defaultExpandGuest
+          />
+        </div>
       )}
 
       {/* Kernel Analysis */}
@@ -91,21 +106,6 @@ export function LinuxConversionView({
         <InitramfsSection initramfs={parsed.initramfs} />
       )}
 
-      {/* File Operations — V2VFileTree with mounted disks (filtered to this stage) */}
-      {hasFileTreeData && toolRun && (
-        <div>
-          <SectionHeader title="File Operations" />
-          <V2VFileTree
-            apiCalls={stageApiCalls}
-            fileCopies={stageFileCopies}
-            driveMappings={toolRun.guestInfo?.driveMappings}
-            fstab={toolRun.guestInfo?.fstab}
-            virtioWinIsoPath={toolRun.virtioWin?.isoPath}
-            defaultExpandGuest
-          />
-        </div>
-      )}
-
       {/* Augeas Errors */}
       {parsed.augeasErrors.length > 0 && (
         <AugeasErrorsSection errors={parsed.augeasErrors} />
@@ -115,21 +115,6 @@ export function LinuxConversionView({
 }
 
 // ── Sub-sections ────────────────────────────────────────────────────────────
-
-function Badge({ children, color }: { children: React.ReactNode; color: 'green' | 'red' | 'blue' | 'slate' | 'amber' }) {
-  const colors = {
-    green: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300',
-    red: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300',
-    blue: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300',
-    slate: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-gray-400',
-    amber: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300',
-  };
-  return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium ${colors[color]}`}>
-      {children}
-    </span>
-  );
-}
 
 // ── Summary ─────────────────────────────────────────────────────────────────
 

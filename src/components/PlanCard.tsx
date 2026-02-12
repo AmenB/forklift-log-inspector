@@ -52,6 +52,15 @@ export function PlanCard({ plan }: PlanCardProps) {
     [vms],
   );
 
+  // Derive effective migration type: prefer plan-level, fall back to VMs
+  const effectiveMigrationType = useMemo(() => {
+    if (plan.migrationType !== 'Unknown') return plan.migrationType;
+    for (const vm of vms) {
+      if (vm.migrationType !== 'Unknown') return vm.migrationType;
+    }
+    return 'Unknown';
+  }, [plan.migrationType, vms]);
+
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
       {/* Plan Header */}
@@ -92,9 +101,9 @@ export function PlanCard({ plan }: PlanCardProps) {
             <div>{vms.length} VM{vms.length !== 1 ? 's' : ''}</div>
           </div>
 
-          {plan.migrationType !== 'Unknown' && (
+          {effectiveMigrationType !== 'Unknown' && (
             <span className="px-2 py-1 rounded text-xs bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400">
-              {plan.migrationType}
+              {effectiveMigrationType}
             </span>
           )}
 

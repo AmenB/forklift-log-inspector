@@ -7,6 +7,9 @@ interface V2VCommandsPanelProps {
   apiCalls: V2VApiCall[];
 }
 
+/** Maximum number of API calls rendered at once to keep the UI responsive. */
+const MAX_DISPLAYED_CALLS = 300;
+
 const SOURCE_COLORS: Record<string, string> = {
   command: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300',
   chroot: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300',
@@ -253,7 +256,7 @@ export function V2VCommandsPanel({ apiCalls }: V2VCommandsPanelProps) {
 
       {/* Hierarchical API call list */}
       <div className="max-h-[600px] overflow-y-auto space-y-0.5">
-        {filtered.slice(0, 300).map((call, idx) => {
+        {filtered.slice(0, MAX_DISPLAYED_CALLS).map((call, idx) => {
           const isExpanded = expandedApiIdx === idx;
           const hasCmds = call.guestCommands.length > 0;
 

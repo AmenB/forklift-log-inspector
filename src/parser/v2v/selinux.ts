@@ -121,8 +121,8 @@ export function parseSELinuxContent(lines: string[], extraRelabelLines?: string[
 
     // ── SELinux config from augeas ────────────────────────────────────
     // Use precise match to avoid SELINUX matching SELINUXTYPE (substring issue)
-    if (line.includes('aug_get "/files/etc/selinux/config/SELINUX"') &&
-        !line.includes('aug_get "/files/etc/selinux/config/SELINUXTYPE"')) {
+    if ((line.includes('aug_get "/files/etc/selinux/config/SELINUX"') || line.includes('aug_get "/file/etc/selinux/config/SELINUX"')) &&
+        !line.includes('/etc/selinux/config/SELINUXTYPE"')) {
       const valMatch = line.match(/aug_get\s*=\s*"([^"]+)"/);
       if (valMatch) {
         config.mode = valMatch[1];
@@ -135,7 +135,7 @@ export function parseSELinuxContent(lines: string[], extraRelabelLines?: string[
       }
     }
 
-    if (line.includes('aug_get "/files/etc/selinux/config/SELINUXTYPE"')) {
+    if (line.includes('aug_get "/files/etc/selinux/config/SELINUXTYPE"') || line.includes('aug_get "/file/etc/selinux/config/SELINUXTYPE"')) {
       const valMatch = line.match(/aug_get\s*=\s*"([^"]+)"/);
       if (valMatch) {
         config.type = valMatch[1];

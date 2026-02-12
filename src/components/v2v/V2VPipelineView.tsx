@@ -5,6 +5,24 @@ import { LineLink, LineLinkNavigateContext } from './LineLink';
 import { StageFileOpsTree } from './V2VFileTree';
 import { groupHiveAccesses, HiveGroupCard } from './RegistryAppsPanel';
 import { formatDuration } from '../../utils/format';
+import { highlightSearch } from './shared';
+import {
+  isInspectStage,
+  isOpenSourceStage,
+  isSourceSetupStage,
+  isDestinationStage,
+  isSELinuxStage,
+  isClosingOverlayStage,
+  isFinishingOffStage,
+  isHostnameStage,
+  isBiosUefiStage,
+  isFilesystemCheckStage,
+  isFilesystemMappingStage,
+  isDiskCopyStage,
+  isOutputMetadataStage,
+  isLinuxConversionStage,
+  isWindowsConversionStage,
+} from './stageMatchers';
 import { InspectSourceView } from './InspectSourceView';
 import { OpenSourceView } from './OpenSourceView';
 import { FileWritesView, hasFileWrites } from './FileWritesView';
@@ -12,14 +30,14 @@ import { DestinationView } from './DestinationView';
 import { SELinuxView } from './SELinuxView';
 import { SourceSetupView } from './SourceSetupView';
 import { ClosingOverlayView } from './ClosingOverlayView';
-import { LinuxConversionView, isLinuxConversionContent } from './LinuxConversionView';
+import { LinuxConversionView } from './LinuxConversionView';
 import { HostnameView } from './HostnameView';
-import { WindowsConversionView, isWindowsConversionContent } from './WindowsConversionView';
+import { WindowsConversionView } from './WindowsConversionView';
 import { BiosUefiView } from './BiosUefiView';
 import { FilesystemCheckView } from './FilesystemCheckView';
-import { FilesystemMappingView, isFilesystemMappingStage } from './FilesystemMappingView';
-import { DiskCopyView, isDiskCopyStage } from './DiskCopyView';
-import { OutputMetadataView, isOutputMetadataStage } from './OutputMetadataView';
+import { FilesystemMappingView } from './FilesystemMappingView';
+import { DiskCopyView } from './DiskCopyView';
+import { OutputMetadataView } from './OutputMetadataView';
 import { FinishingOffView } from './FinishingOffView';
 
 interface V2VPipelineViewProps {
@@ -242,119 +260,6 @@ export function V2VPipelineView({ toolRun }: V2VPipelineViewProps) {
 
 // ── Stage content viewer ─────────────────────────────────────────────────────
 
-/** Detect if this stage name has structured data that InspectSourceView can parse. */
-function isInspectStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  // Exclude BIOS/UEFI detection stage — it has its own view
-  if (isBiosUefiStage(lower)) return false;
-  // Exclude filesystem integrity check — it has its own view
-  if (isFilesystemCheckStage(lower)) return false;
-  // Exclude filesystem mapping stage — it has its own view
-  if (isFilesystemMappingStage(lower)) return false;
-  return (
-    (lower.includes('inspecting') && lower.includes('source')) ||
-    (lower.includes('detecting') && (lower.includes('bios') || lower.includes('uefi') || lower.includes('boot'))) ||
-    (lower.includes('checking') && lower.includes('filesystem') && lower.includes('integrity')) ||
-    (lower.includes('mapping') && lower.includes('filesystem'))
-  );
-}
-
-/** Detect "Checking filesystem integrity before/after conversion" stage. */
-function isFilesystemCheckStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('checking') && lower.includes('filesystem') && lower.includes('integrity');
-}
-
-/** Detect if this stage is "Opening the source" (appliance boot). */
-function isOpenSourceStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('opening') && lower.includes('source');
-}
-
-/** Detect if this stage is "Setting up the source". */
-function isSourceSetupStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('setting up') && lower.includes('source');
-}
-
-/** Detect if this stage is "Setting up the destination". */
-function isDestinationStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('setting up') && lower.includes('destination');
-}
-
-/** Detect if this stage is "SELinux relabelling". */
-function isSELinuxStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('selinux');
-}
-
-/** Detect if this stage is "Closing the overlay". */
-function isClosingOverlayStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('closing') && lower.includes('overlay');
-}
-
-/** Detect if this stage is "Finishing off". */
-function isFinishingOffStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('finishing') && lower.includes('off');
-}
-
-/** Detect if this stage is "Setting the hostname". */
-function isHostnameStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('setting') && lower.includes('hostname');
-}
-
-/** Detect if this stage is a Linux/RHEL conversion stage. */
-function isLinuxConversionStage(name: string, content?: string[]): boolean {
-  const lower = name.toLowerCase();
-  // Match name-based patterns: "RHEL/Linux conversion", "Linux conversion", etc.
-  if (lower.includes('conversion') && (lower.includes('linux') || lower.includes('rhel'))) return true;
-  // Match "Converting X.Y (distro) to run on ..." — Debian/Ubuntu use this naming
-  if (lower.includes('converting') && !lower.includes('windows') && lower.includes('to run on')) return true;
-  if (lower.includes('converting') && !lower.includes('windows') && lower.includes('to ')) return true;
-  // Match "picked conversion module linux" in the name
-  if (lower.includes('picked conversion module') && !lower.includes('windows')) return true;
-  // Fallback: check content — but NOT if the name matches a known specific stage
-  if (content && !isSpecificNonConversionStage(name) && isLinuxConversionContent(content) && !isWindowsConversionContent(content)) return true;
-  return false;
-}
-
-/** Detect if this stage is a Windows conversion stage. */
-function isWindowsConversionStage(name: string, content?: string[]): boolean {
-  const lower = name.toLowerCase();
-  if (lower.includes('converting') && lower.includes('windows')) return true;
-  if (lower.includes('picked conversion module') && lower.includes('windows')) return true;
-  if (lower.includes('conversion') && lower.includes('windows')) return true;
-  // Fallback: check content — but NOT if the name already matches a known specific stage
-  // (hostname, seed, SELinux, etc. all contain Windows API calls like inspect_get_type)
-  if (content && !isSpecificNonConversionStage(name) && isWindowsConversionContent(content)) return true;
-  return false;
-}
-
-/** Stages that have their own views and should not be claimed by conversion detection. */
-function isSpecificNonConversionStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return STAGE_VIEWS.some((e) => e.isSpecific && e.match(name))
-    || isSeedStage(name)
-    || (lower.includes('checking') && lower.includes('free') && lower.includes('disk'))
-    || (lower.includes('checking') && lower.includes('free') && lower.includes('space'));
-}
-
-/** Detect "Setting a random seed" or similar seed stages. */
-function isSeedStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('seed') || lower.includes('random');
-}
-
-/** Detect "Checking if the guest needs BIOS or UEFI to boot" stage. */
-function isBiosUefiStage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return (lower.includes('bios') || lower.includes('uefi')) && lower.includes('boot');
-}
-
 /** Extract warning lines from stage content. */
 function extractWarnings(content: string[]): string[] {
   return content.filter((l) => l.includes('virt-v2v: warning:') || l.includes('virt-v2v-in-place: warning:'));
@@ -379,7 +284,11 @@ const STAGE_VIEWS: StageViewEntry[] = [
   { match: isOpenSourceStage, render: ({ content }) => <OpenSourceView content={content} />, isSpecific: true },
   { match: isSourceSetupStage, render: ({ content }) => <SourceSetupView content={content} />, isSpecific: true },
   { match: isDestinationStage, render: ({ content }) => <DestinationView content={content} />, isSpecific: true },
-  { match: isSELinuxStage, render: ({ content, toolRun }) => <SELinuxView content={content} toolRun={toolRun} />, isSpecific: true },
+  { match: isSELinuxStage, render: ({ content, toolRun, stageStartLine, stageEndLine }) => {
+    const apiCalls = toolRun.apiCalls.filter((c) => c.lineNumber >= stageStartLine && c.lineNumber < stageEndLine);
+    const fileCopies = toolRun.virtioWin.fileCopies.filter((fc) => fc.lineNumber >= stageStartLine && fc.lineNumber < stageEndLine);
+    return <SELinuxView content={content} toolRun={toolRun} stageApiCalls={apiCalls} stageFileCopies={fileCopies} />;
+  }, isSpecific: true },
   { match: isClosingOverlayStage, render: ({ content }) => <ClosingOverlayView content={content} />, isSpecific: true },
   { match: isFinishingOffStage, render: ({ content }) => <FinishingOffView content={content} />, isSpecific: true },
   { match: isHostnameStage, render: ({ content, stageName }) => <HostnameView content={content} stageName={stageName} />, isSpecific: true },
@@ -477,8 +386,9 @@ function StageContentModal({
   const isStructured = hasStructuredView(stageName, content);
   const label = isYaml ? 'YAML Output' : 'Output';
 
-  // Conversion stages already show their own views — skip the generic ones for those
+  // Conversion and SELinux stages already show their own file ops — skip the generic ones for those
   const isConversionStage = isLinuxConversionStage(stageName, content) || isWindowsConversionStage(stageName, content);
+  const hasOwnFileOps = isConversionStage || isSELinuxStage(stageName);
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-10">
@@ -529,16 +439,18 @@ function StageContentModal({
             <div className="px-5 py-4">
               {(() => {
                 const entry = findStageView(stageName, content);
-                return entry
-                  ? entry.render({ content, stageName, toolRun, stageStartLine, stageEndLine })
-                  : <FileWritesView content={content} />;
+                if (entry) return entry.render({ content, stageName, toolRun, stageStartLine, stageEndLine });
+                // Only show FileWritesView as fallback when no StageFileOpsTree will be rendered
+                // (StageFileOpsTree already shows the same file write data in tree form)
+                if (hasOwnFileOps) return <FileWritesView content={content} />;
+                return null;
               })()}
               {/* Stage warnings (skip for Windows conversion which has its own) */}
               {!isWindowsConversionStage(stageName, content) && (
                 <StageWarnings content={content} />
               )}
-              {/* Per-stage file operations tree (skip for conversion stages that have their own) */}
-              {!isConversionStage && (
+              {/* Per-stage file operations tree (skip for stages that have their own) */}
+              {!hasOwnFileOps && (
                 <StageFileOpsTree apiCalls={stageApiCalls} fileCopies={stageFileCopies} />
               )}
               {/* Per-stage registry hive operations (skip for conversion stages that have their own) */}
@@ -885,31 +797,10 @@ const RawLogRow = memo(function RawLogRow({ text, isMatch, isCurrent, searchQuer
       className={`whitespace-pre px-5 ${bg}`}
       style={{ height: RAW_ROW_HEIGHT }}
     >
-      {isMatch && searchQuery ? highlightSearchText(text, searchQuery) : text}
+      {isMatch && searchQuery ? highlightSearch(text, searchQuery) : text}
     </div>
   );
 });
-
-function highlightSearchText(text: string, query: string): ReactNode {
-  const parts: React.ReactNode[] = [];
-  const lower = text.toLowerCase();
-  const lowerQuery = query.toLowerCase();
-  let lastIdx = 0;
-
-  while (true) {
-    const idx = lower.indexOf(lowerQuery, lastIdx);
-    if (idx === -1) break;
-    if (idx > lastIdx) parts.push(text.slice(lastIdx, idx));
-    parts.push(
-      <mark key={idx} className="bg-yellow-300 dark:bg-yellow-700 text-inherit rounded-sm px-0.5">
-        {text.slice(idx, idx + query.length)}
-      </mark>,
-    );
-    lastIdx = idx + query.length;
-  }
-  if (lastIdx < text.length) parts.push(text.slice(lastIdx));
-  return parts.length > 0 ? <>{parts}</> : text;
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

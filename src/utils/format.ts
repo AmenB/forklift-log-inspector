@@ -27,3 +27,10 @@ export function formatMemory(kb: number): string {
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
   return `${Math.round(mb)} MB`;
 }
+
+/** Format a microsecond count as a human-readable string (e.g. "1.23s", "4.5ms", "200µs"). */
+export function formatMicroseconds(us: number): string {
+  if (us >= 1_000_000) return `${(us / 1_000_000).toFixed(2)}s`;
+  if (us >= 1_000) return `${(us / 1_000).toFixed(1)}ms`;
+  return `${us}µs`;
+}

@@ -14,7 +14,7 @@ import {
   CAPABILITY_LABELS,
 } from '../../parser/v2v';
 import { formatBytes } from '../../utils/format';
-import { SectionHeader } from './shared';
+import { SectionHeader, Badge } from './shared';
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -97,18 +97,7 @@ export { isDiskCopyStage };
 // ── Shared UI ───────────────────────────────────────────────────────────────
 
 function SummaryBadge({ children, color }: { children: React.ReactNode; color: 'green' | 'blue' | 'slate' | 'purple' | 'amber' }) {
-  const colors = {
-    green: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300',
-    blue: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
-    slate: 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-gray-300',
-    purple: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300',
-    amber: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300',
-  };
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${colors[color]}`}>
-      {children}
-    </span>
-  );
+  return <Badge color={color} variant="pill">{children}</Badge>;
 }
 
 function KeyValue({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

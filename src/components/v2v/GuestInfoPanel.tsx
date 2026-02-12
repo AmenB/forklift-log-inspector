@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { V2VGuestInfo, V2VSourceVM, V2VInstalledApp } from '../../types/v2v';
 import { formatMemory } from '../../utils/format';
-import { InfoTag } from './shared';
+import { InfoTag, FsTypeBadge, AppRow } from './shared';
 import { ExpandArrow } from '../common';
 
 interface GuestInfoPanelProps {
@@ -278,72 +278,6 @@ function InstalledAppsSection({
   );
 }
 
-function AppRow({ app }: { app: V2VInstalledApp }) {
-  const [expanded, setExpanded] = useState(false);
-  const displayName = app.displayName || app.name;
-  const hasDetails = app.installPath || app.description || app.arch;
-
-  return (
-    <>
-      <tr
-        onClick={hasDetails ? () => setExpanded(!expanded) : undefined}
-        className={`${
-          hasDetails ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''
-        } transition-colors`}
-      >
-        <td className="px-3 py-1.5 text-slate-800 dark:text-gray-200">
-          <div className="flex items-center gap-1.5">
-            {hasDetails && (
-              <ExpandArrow expanded={expanded} className="text-[8px] text-slate-400 flex-shrink-0" />
-            )}
-            <span className="truncate">{displayName}</span>
-          </div>
-        </td>
-        <td className="px-3 py-1.5 font-mono text-slate-600 dark:text-gray-400">
-          {app.version}
-        </td>
-        <td className="px-3 py-1.5 text-slate-500 dark:text-gray-500 hidden md:table-cell truncate max-w-[200px]">
-          {app.publisher}
-        </td>
-      </tr>
-      {expanded && hasDetails && (
-        <tr>
-          <td colSpan={3} className="px-3 py-2 bg-slate-50 dark:bg-slate-800/30">
-            <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11px] pl-4">
-              {app.installPath && (
-                <span>
-                  <span className="text-slate-400 dark:text-gray-500">Path: </span>
-                  <span className="font-mono text-slate-600 dark:text-gray-400">
-                    {app.installPath}
-                  </span>
-                </span>
-              )}
-              {app.arch && (
-                <span>
-                  <span className="text-slate-400 dark:text-gray-500">Arch: </span>
-                  <span className="text-slate-600 dark:text-gray-400">{app.arch}</span>
-                </span>
-              )}
-              {app.description && (
-                <span>
-                  <span className="text-slate-400 dark:text-gray-500">Description: </span>
-                  <span className="text-slate-600 dark:text-gray-400">{app.description}</span>
-                </span>
-              )}
-              {app.name && app.name !== app.displayName && (
-                <span>
-                  <span className="text-slate-400 dark:text-gray-500">ID: </span>
-                  <span className="font-mono text-slate-500 dark:text-gray-500">{app.name}</span>
-                </span>
-              )}
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
 function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex flex-col">
@@ -394,16 +328,7 @@ function BlkidSection({ entries }: { entries: import('../../types/v2v').V2VBlkid
                   </td>
                   <td className="px-3 py-1.5">
                     {e.type ? (
-                      <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
-                        e.type === 'ntfs' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300'
-                        : e.type === 'vfat' || e.type === 'fat32' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300'
-                        : e.type === 'ext4' || e.type === 'ext3' || e.type === 'ext2' ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-                        : e.type === 'xfs' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-                        : e.type === 'swap' ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-gray-300'
-                      }`}>
-                        {e.type}
-                      </span>
+                      <FsTypeBadge fsType={e.type} />
                     ) : (
                       <span className="text-slate-300 dark:text-gray-600">—</span>
                     )}

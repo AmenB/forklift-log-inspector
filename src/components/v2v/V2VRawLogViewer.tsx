@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
 import { useV2VStore } from '../../store/useV2VStore';
 import type { V2VToolRun, V2VLineCategory } from '../../types/v2v';
+import { highlightSearch } from './shared';
 
 interface V2VRawLogViewerProps {
   toolRun: V2VToolRun;
@@ -399,26 +400,3 @@ const LogRow = memo(function LogRow({ line, isHighlighted, isSearchMatch, isCurr
   );
 });
 
-// ── Search highlight helper ─────────────────────────────────────────
-
-function highlightSearch(text: string, query: string): React.ReactNode {
-  if (!query) return text;
-  const parts: React.ReactNode[] = [];
-  const lower = text.toLowerCase();
-  const lowerQuery = query.toLowerCase();
-  let lastIdx = 0;
-
-  while (true) {
-    const idx = lower.indexOf(lowerQuery, lastIdx);
-    if (idx === -1) break;
-    if (idx > lastIdx) parts.push(text.slice(lastIdx, idx));
-    parts.push(
-      <mark key={idx} className="bg-yellow-300 dark:bg-yellow-700 text-inherit rounded-sm px-0.5">
-        {text.slice(idx, idx + query.length)}
-      </mark>,
-    );
-    lastIdx = idx + query.length;
-  }
-  if (lastIdx < text.length) parts.push(text.slice(lastIdx));
-  return parts.length > 0 ? <>{parts}</> : text;
-}

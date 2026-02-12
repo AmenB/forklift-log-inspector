@@ -69,24 +69,22 @@ function CommandGroupCard({ group }: { group: CommandGroup }) {
           {group.commands.length} invocation{group.commands.length !== 1 ? 's' : ''}
         </span>
       </button>
-      {expanded && (
-        <div className="divide-y divide-slate-100 dark:divide-slate-800">
-          {shown.map((cmd, idx) => (
-            <div key={idx} className="px-4 py-2 flex items-start gap-2 text-[11px]">
-              <span className="text-slate-400 dark:text-gray-500 flex-shrink-0 w-5 text-right">{idx + 1}</span>
-              <code className="flex-1 font-mono text-slate-700 dark:text-gray-300 break-all">
-                {cmd.command} {cmd.args.join(' ')}
-              </code>
-              <LineLink line={cmd.lineNumber} />
-            </div>
-          ))}
-          {!expanded && group.commands.length > previewCount && (
-            <div className="px-4 py-2 text-[11px] text-slate-400 dark:text-gray-500 italic">
-              +{group.commands.length - previewCount} more...
-            </div>
-          )}
-        </div>
-      )}
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        {shown.map((cmd, idx) => (
+          <div key={idx} className="px-4 py-2 flex items-start gap-2 text-[11px]">
+            <span className="text-slate-400 dark:text-gray-500 flex-shrink-0 w-5 text-right">{idx + 1}</span>
+            <code className="flex-1 font-mono text-slate-700 dark:text-gray-300 break-all">
+              {cmd.command} {cmd.args.join(' ')}
+            </code>
+            <LineLink line={cmd.lineNumber} />
+          </div>
+        ))}
+        {!expanded && group.commands.length > previewCount && (
+          <div className="px-4 py-2 text-[11px] text-slate-400 dark:text-gray-500 italic">
+            +{group.commands.length - previewCount} more...
+          </div>
+        )}
+      </div>
     </div>
   );
 }

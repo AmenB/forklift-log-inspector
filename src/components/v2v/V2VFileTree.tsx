@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef, createContext, useContext } from 'react';
 import type { V2VApiCall, V2VDriveMapping, V2VFstabEntry, V2VFileCopy } from '../../types/v2v';
+import type { RelabeledFile } from '../../parser/v2v';
 import { LineLink } from './LineLink';
 import { formatBytes } from '../../utils/format';
 import { OriginBadge } from './shared';
@@ -85,7 +86,7 @@ interface FileCheck {
 }
 
 interface FileOp {
-  type: 'copy' | 'augeas';
+  type: 'copy' | 'augeas' | 'relabel';
   origin: V2VFileCopy['origin'];
   source: string;
   sizeBytes: number | null;
@@ -98,6 +99,10 @@ interface FileOp {
   augKey?: string;
   /** Augeas value: result for get, second arg for set, match results for match */
   augValue?: string;
+  /** SELinux context before relabel (only when type === 'relabel') */
+  fromContext?: string;
+  /** SELinux context after relabel (only when type === 'relabel') */
+  toContext?: string;
 }
 
 interface TreeNode {
@@ -136,6 +141,7 @@ interface TreeStats {
   copies: number;
   scripts: number;
   augeas: number;
+  relabels: number;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -148,8 +154,8 @@ function isAugeasDataCall(call: V2VApiCall): boolean {
   const arg = call.args;
   // Skip error/metadata paths like /augeas/files/.../error/
   if (arg.includes('/augeas/')) return false;
-  // Only include paths operating on real files
-  if (arg.includes('/files/')) return true;
+  // Only include paths operating on real files (/files/ or /file/)
+  if (arg.includes('/files/') || arg.includes('/file/')) return true;
   return false;
 }
 
@@ -172,9 +178,13 @@ const CONFIG_EXTENSIONS = /\.(conf|cfg|sh|ini|rules|repo|list|cnf|aug|mount|serv
  * { filePath: "/etc/fstab", key: "1/spec" }.
  */
 function parseAugeasPath(augPath: string): { filePath: string; key: string } | null {
-  // Strip leading "/files" prefix
+  // Strip leading "/files" or "/file" prefix
   let path = augPath;
-  if (path.startsWith('/files')) path = path.slice(6); // "/files".length === 6
+  if (path.startsWith('/files/') || path.startsWith('/files"') || path === '/files') {
+    path = path.slice(6); // "/files".length === 6
+  } else if (path.startsWith('/file/') || path.startsWith('/file"') || path === '/file') {
+    path = path.slice(5); // "/file".length === 5
+  }
   if (!path.startsWith('/')) return null;
 
   const segments = path.split('/').filter(Boolean);
@@ -292,6 +302,19 @@ function groupByMount(apiCalls: V2VApiCall[]): MountGroup[] {
   }
   flush();
 
+  // If there are orphaned checks that accumulated without a mount context
+  // (e.g. augeas calls in a conversion stage where mount happened in a previous stage),
+  // create a synthetic group so they're not lost.
+  if (currentChecks.length > 0) {
+    groups.push({
+      device: 'Guest',
+      mountpoint: '/',
+      chrootPath: '',
+      checks: [...currentChecks],
+      pass: 1,
+    });
+  }
+
   return groups;
 }
 
@@ -331,7 +354,7 @@ function insertPath(root: TreeNode, rawPath: string): TreeNode {
   return node;
 }
 
-function buildTree(checks: V2VApiCall[], fileCopies: V2VFileCopy[]): TreeNode {
+function buildTree(checks: V2VApiCall[], fileCopies: V2VFileCopy[], relabeledFiles?: RelabeledFile[]): TreeNode {
   const root: TreeNode = { name: '/', path: '/', children: new Map(), checks: [], ops: [] };
 
   for (const call of checks) {
@@ -390,6 +413,24 @@ function buildTree(checks: V2VApiCall[], fileCopies: V2VFileCopy[]): TreeNode {
     });
   }
 
+  if (relabeledFiles) {
+    for (const rf of relabeledFiles) {
+      const node = insertPath(root, rf.path);
+      node.ops.push({
+        type: 'relabel',
+        fromContext: rf.fromContext,
+        toContext: rf.toContext,
+        // Default values for fields not used by relabel
+        origin: 'guest',
+        source: '',
+        sizeBytes: null,
+        content: null,
+        contentTruncated: false,
+        lineNumber: 0,
+      });
+    }
+  }
+
   return root;
 }
 
@@ -408,14 +449,17 @@ function countStats(node: TreeNode): TreeStats {
   let copies = 0;
   let scripts = 0;
   let augeas = 0;
+  let relabels = 0;
 
   const isLeaf = node.children.size === 0;
   if (isLeaf && (node.checks.length > 0 || node.ops.length > 0)) {
     totalEntries = 1;
     const augOps = node.ops.filter((op) => op.type === 'augeas');
+    const relabelOps = node.ops.filter((op) => op.type === 'relabel');
     if (node.ops.some(isTrueCopy)) copies = 1;
     if (node.ops.some(isScriptOp)) scripts = 1;
     if (augOps.length > 0) augeas = augOps.length;
+    if (relabelOps.length > 0) relabels = relabelOps.length;
     if (node.checks.length > 0) {
       const anyFound = node.checks.some(isCheckFound);
       if (anyFound) found = 1;
@@ -431,9 +475,10 @@ function countStats(node: TreeNode): TreeStats {
     copies += sub.copies;
     scripts += sub.scripts;
     augeas += sub.augeas;
+    relabels += sub.relabels;
   }
 
-  return { totalEntries, found, notFound, copies, scripts, augeas };
+  return { totalEntries, found, notFound, copies, scripts, augeas, relabels };
 }
 
 function isDirectory(node: TreeNode): boolean {
@@ -630,7 +675,7 @@ export function V2VFileTree({
 
   // Compute summary stats from the actual trees (consistent with DeviceTree display)
   const summaryStats = useMemo(() => {
-    let totalEntries = 0, found = 0, notFound = 0, copies = 0, scripts = 0, augeas = 0;
+    let totalEntries = 0, found = 0, notFound = 0, copies = 0, scripts = 0, augeas = 0, relabels = 0;
     for (const { merged, copies: fileCopies } of deviceGroupsWithCopies) {
       const tree = buildTree(merged.allChecks, fileCopies);
       const stats = countStats(tree);
@@ -640,6 +685,7 @@ export function V2VFileTree({
       copies += stats.copies;
       scripts += stats.scripts;
       augeas += stats.augeas;
+      relabels += stats.relabels;
     }
     for (const group of handleGroups) {
       const tree = buildTree(group.checks, []);
@@ -650,8 +696,9 @@ export function V2VFileTree({
       copies += stats.copies;
       scripts += stats.scripts;
       augeas += stats.augeas;
+      relabels += stats.relabels;
     }
-    return { totalEntries, found, notFound, copies, scripts, augeas };
+    return { totalEntries, found, notFound, copies, scripts, augeas, relabels };
   }, [deviceGroupsWithCopies, handleGroups]);
 
   const totalDevices = new Set([
@@ -690,6 +737,11 @@ export function V2VFileTree({
           {summaryStats.augeas > 0 && (
             <span className="text-violet-500 dark:text-violet-400">
               {summaryStats.augeas.toLocaleString()} config ops
+            </span>
+          )}
+          {summaryStats.relabels > 0 && (
+            <span className="text-indigo-500 dark:text-indigo-400">
+              {summaryStats.relabels.toLocaleString()} relabelled
             </span>
           )}
         </div>
@@ -746,9 +798,11 @@ export function V2VFileTree({
 export function StageFileOpsTree({
   apiCalls,
   fileCopies: rawFileCopies,
+  relabeledFiles,
 }: {
   apiCalls: V2VApiCall[];
   fileCopies?: V2VFileCopy[];
+  relabeledFiles?: RelabeledFile[];
 }) {
   // Filter to file-related calls only (broader set than FILE_CHECK_APIS)
   const fileCalls = useMemo(
@@ -758,12 +812,13 @@ export function StageFileOpsTree({
 
   const fileCopies = useMemo(() => dedupeFileCopies(rawFileCopies || []), [rawFileCopies]);
 
-  if (fileCalls.length === 0 && fileCopies.length === 0) return null;
+  if (fileCalls.length === 0 && fileCopies.length === 0 && (!relabeledFiles || relabeledFiles.length === 0)) return null;
 
   return (
     <DeviceTree
       checks={fileCalls}
       fileCopies={fileCopies}
+      relabeledFiles={relabeledFiles}
       primaryLabel="File Operations"
       secondaryLabel=""
       icon="📂"
@@ -779,6 +834,7 @@ export function StageFileOpsTree({
 function DeviceTree({
   checks,
   fileCopies,
+  relabeledFiles,
   primaryLabel,
   secondaryLabel,
   passLabel,
@@ -789,6 +845,7 @@ function DeviceTree({
 }: {
   checks: V2VApiCall[];
   fileCopies: V2VFileCopy[];
+  relabeledFiles?: RelabeledFile[];
   primaryLabel: string;
   secondaryLabel: string;
   /** e.g. "(pass 2)" — shown next to device path in a distinct color */
@@ -803,7 +860,7 @@ function DeviceTree({
 }) {
   const devMode = useDevMode();
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const tree = useMemo(() => buildTree(checks, fileCopies), [checks, fileCopies]);
+  const tree = useMemo(() => buildTree(checks, fileCopies, relabeledFiles), [checks, fileCopies, relabeledFiles]);
   const stats = useMemo(() => countStats(tree), [tree]);
   const { focusedPath, focusedVersion } = useContext(FileTreeNavContext);
 
@@ -869,6 +926,11 @@ function DeviceTree({
           {stats.augeas > 0 && (
             <span className="text-violet-500 dark:text-violet-400">
               {stats.augeas.toLocaleString()} config ops
+            </span>
+          )}
+          {stats.relabels > 0 && (
+            <span className="text-indigo-500 dark:text-indigo-400">
+              {stats.relabels.toLocaleString()} relabelled
             </span>
           )}
           {mountLineNumber !== undefined && (
@@ -943,11 +1005,13 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
   const hasOps = node.ops.length > 0;
   const copyOps = node.ops.filter((op) => op.type === 'copy');
   const augOps = node.ops.filter((op) => op.type === 'augeas');
+  const relabelOps = node.ops.filter((op) => op.type === 'relabel');
   const hasCopyOps = copyOps.length > 0;
   const hasAugOps = augOps.length > 0;
+  const hasRelabelOps = relabelOps.length > 0;
   const isFound = node.checks.some(isCheckFound);
   const scriptOp = copyOps.find((op) => op.content !== null);
-  // Any copied file or augeas config file is expandable
+  // Any copied file, augeas config file, or relabelled file is expandable (if it has details to show)
   const isExpandableLeaf = !isDir && (hasCopyOps || hasAugOps);
 
   const sortedChildren = useMemo(() => {
@@ -964,7 +1028,10 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
   let statusBadge: React.ReactNode = null;
 
   if (!isDir) {
-    if (hasAugOps && !hasCopyOps && !hasChecks) {
+    if (hasRelabelOps && !hasCopyOps && !hasAugOps && !hasChecks) {
+      // Pure relabel node
+      leafIcon = <span className="text-indigo-500">📄</span>;
+    } else if (hasAugOps && !hasCopyOps && !hasChecks && !hasRelabelOps) {
       // Pure augeas config file node
       leafIcon = <span className="text-violet-500">⚙</span>;
     } else if (hasOps && hasChecks) {
@@ -1071,6 +1138,11 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
           );
         })()}
 
+        {/* SELinux relabel context change (inline) */}
+        {!isDir && hasRelabelOps && relabelOps.length === 1 && (
+          <InlineContextChange fromContext={relabelOps[0].fromContext ?? ''} toContext={relabelOps[0].toContext ?? ''} />
+        )}
+
         {/* File size */}
         {!isDir && hasCopyOps && (() => {
           const sz = copyOps.find((op) => op.sizeBytes !== null)?.sizeBytes;
@@ -1113,6 +1185,11 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
             {stats.augeas > 0 && (
               <span className="text-violet-500 dark:text-violet-400 ml-1">
                 {stats.augeas} config ops
+              </span>
+            )}
+            {stats.relabels > 0 && (
+              <span className="text-indigo-500 dark:text-indigo-400 ml-1">
+                {stats.relabels} relabelled
               </span>
             )}
           </span>
@@ -1275,6 +1352,47 @@ function AugeasOpRow({ op }: { op: FileOp }) {
         <LineLink line={op.lineNumber} />
       </span>
     </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SELinux relabel context change — inline display for relabelled files
+// ────────────────────────────────────────────────────────────────────────────
+
+function InlineContextChange({ fromContext, toContext }: { fromContext: string; toContext: string }) {
+  const isNew = fromContext === '<no context>';
+
+  // Detect what changed
+  const fromParts = fromContext.split(':');
+  const toParts = toContext.split(':');
+  const userChanged = !isNew && fromParts[0] !== toParts[0];
+  const typeChanged = !isNew && (fromParts[2] || '') !== (toParts[2] || '');
+
+  // Pick color based on change type
+  const toColor = isNew
+    ? 'text-purple-600 dark:text-purple-400'
+    : userChanged
+      ? 'text-blue-600 dark:text-blue-400'
+      : typeChanged
+        ? 'text-amber-600 dark:text-amber-400'
+        : 'text-slate-500 dark:text-gray-400';
+
+  return (
+    <span className="inline-flex items-center gap-1 ml-1 text-[9px] font-mono overflow-hidden">
+      {isNew ? (
+        <span className={toColor}>{toContext}</span>
+      ) : (
+        <>
+          <span className="text-slate-400 dark:text-gray-600 line-through truncate max-w-[180px]" title={fromContext}>
+            {fromContext}
+          </span>
+          <span className="text-slate-300 dark:text-gray-600 flex-shrink-0">{'\u2192'}</span>
+          <span className={`${toColor} truncate max-w-[180px]`} title={toContext}>
+            {toContext}
+          </span>
+        </>
+      )}
+    </span>
   );
 }
 

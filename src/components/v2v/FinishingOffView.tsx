@@ -7,6 +7,7 @@
 import { useMemo, useState } from 'react';
 import { SectionHeader } from './shared';
 import { ExpandArrow } from '../common';
+import { formatBytes, formatMicroseconds } from '../../utils/format';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -388,17 +389,3 @@ function ErrorsSection({ errors }: { errors: string[] }) {
   );
 }
 
-// ── Formatters ──────────────────────────────────────────────────────────────
-
-function formatMicroseconds(us: number): string {
-  if (us >= 1_000_000) return `${(us / 1_000_000).toFixed(2)}s`;
-  if (us >= 1_000) return `${(us / 1_000).toFixed(1)}ms`;
-  return `${us}µs`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GiB`;
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MiB`;
-  if (bytes >= 1_024) return `${(bytes / 1_024).toFixed(1)} KiB`;
-  return `${bytes} B`;
-}

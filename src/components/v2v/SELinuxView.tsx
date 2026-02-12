@@ -5,18 +5,16 @@
  * setfiles execution details, and the relabelled files summary.
  */
 import { useMemo, useState } from 'react';
-import { ExpandArrow } from '../common';
 import type {
   SELinuxConfig,
   AugeasError,
   MountPoint,
   SetfilesExec,
-  RelabeledFile,
-  RelabelGroup,
 } from '../../parser/v2v';
 import { parseSELinuxContent } from '../../parser/v2v';
-import type { V2VToolRun } from '../../types/v2v';
+import type { V2VToolRun, V2VApiCall, V2VFileCopy } from '../../types/v2v';
 import { SectionHeader } from './shared';
+import { StageFileOpsTree } from './V2VFileTree';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,11 +39,22 @@ function extractAllRelabeledLines(toolRun?: V2VToolRun): string[] {
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function SELinuxView({ content, toolRun }: { content: string[]; toolRun?: V2VToolRun }) {
+export function SELinuxView({ content, toolRun, stageApiCalls, stageFileCopies }: {
+  content: string[];
+  toolRun?: V2VToolRun;
+  stageApiCalls?: V2VApiCall[];
+  stageFileCopies?: V2VFileCopy[];
+}) {
   const allRelabeledLines = useMemo(() => extractAllRelabeledLines(toolRun), [toolRun]);
   const parsed = useMemo(
     () => parseSELinuxContent(content, allRelabeledLines.length > 0 ? allRelabeledLines : undefined),
     [content, allRelabeledLines],
+  );
+
+  // Flat array of relabelled files for the unified tree
+  const allRelabeledFiles = useMemo(
+    () => parsed.relabelGroups.flatMap((g) => g.files),
+    [parsed.relabelGroups],
   );
 
   // If nothing at all was found, show a simple message
@@ -75,6 +84,18 @@ export function SELinuxView({ content, toolRun }: { content: string[]; toolRun?:
         <ConfigSection config={parsed.config} />
       )}
 
+      {/* File Operations — unified tree with file checks, augeas ops, and relabelled files */}
+      {(parsed.totalRelabeled > 0 || (stageApiCalls && stageApiCalls.length > 0) || (stageFileCopies && stageFileCopies.length > 0)) && (
+        <div>
+          <SectionHeader title="File Operations" />
+          <StageFileOpsTree
+            apiCalls={stageApiCalls ?? []}
+            fileCopies={stageFileCopies}
+            relabeledFiles={allRelabeledFiles}
+          />
+        </div>
+      )}
+
       {/* Mount Points */}
       {parsed.mountPoints.length > 0 && (
         <MountPointsSection mounts={parsed.mountPoints} />
@@ -90,14 +111,6 @@ export function SELinuxView({ content, toolRun }: { content: string[]; toolRun?:
         parsed.setfiles.exitCode !== null ||
         parsed.setfiles.contextErrors.length > 0) && (
         <SetfilesSection setfiles={parsed.setfiles} />
-      )}
-
-      {/* Relabelling Summary */}
-      {parsed.totalRelabeled > 0 && (
-        <RelabelSummarySection
-          groups={parsed.relabelGroups}
-          total={parsed.totalRelabeled}
-        />
       )}
 
     </div>
@@ -297,217 +310,3 @@ function SetfilesSection({ setfiles }: { setfiles: SetfilesExec }) {
   );
 }
 
-// ── Relabel Tree ────────────────────────────────────────────────────────────
-
-interface RelabelTreeNode {
-  name: string;
-  path: string;
-  children: Map<string, RelabelTreeNode>;
-  /** Leaf file data (null for directories) */
-  file: RelabeledFile | null;
-}
-
-function buildRelabelTree(files: RelabeledFile[]): RelabelTreeNode {
-  const root: RelabelTreeNode = { name: '/', path: '/', children: new Map(), file: null };
-
-  for (const f of files) {
-    const parts = f.path.split('/').filter(Boolean);
-    let node = root;
-    let currentPath = '';
-
-    for (let i = 0; i < parts.length; i++) {
-      currentPath += '/' + parts[i];
-      const isLeaf = i === parts.length - 1;
-
-      if (!node.children.has(parts[i])) {
-        node.children.set(parts[i], {
-          name: parts[i],
-          path: currentPath,
-          children: new Map(),
-          file: isLeaf ? f : null,
-        });
-      } else if (isLeaf) {
-        node.children.get(parts[i])!.file = f;
-      }
-      node = node.children.get(parts[i])!;
-    }
-  }
-
-  return root;
-}
-
-/** Collapse single-child directory chains into one node (e.g. "root/.cache/mesa_shader_cache") */
-function collapseTree(node: RelabelTreeNode): RelabelTreeNode {
-  // Collapse children first (bottom-up)
-  const newChildren = new Map<string, RelabelTreeNode>();
-  for (const [key, child] of node.children) {
-    newChildren.set(key, collapseTree(child));
-  }
-  node.children = newChildren;
-
-  // If this is a dir with exactly one child that is also a dir, merge them
-  if (node.file === null && node.children.size === 1) {
-    const [, onlyChild] = [...node.children.entries()][0];
-    if (onlyChild.file === null && onlyChild.children.size > 0) {
-      return {
-        name: node.name === '/' ? onlyChild.name : node.name + '/' + onlyChild.name,
-        path: onlyChild.path,
-        children: onlyChild.children,
-        file: null,
-      };
-    }
-  }
-
-  return node;
-}
-
-function countTreeFiles(node: RelabelTreeNode): number {
-  if (node.file) return 1;
-  let count = 0;
-  for (const child of node.children.values()) {
-    count += countTreeFiles(child);
-  }
-  return count;
-}
-
-function RelabelSummarySection({
-  groups,
-  total,
-}: {
-  groups: RelabelGroup[];
-  total: number;
-}) {
-  // Build a single tree from all files across all groups
-  const allFiles = useMemo(
-    () => groups.flatMap((g) => g.files),
-    [groups],
-  );
-  const tree = useMemo(() => collapseTree(buildRelabelTree(allFiles)), [allFiles]);
-
-  // Sort root children: directories first, then by file count desc
-  const sortedRootChildren = useMemo(() => {
-    return [...tree.children.values()].sort((a, b) => {
-      const aIsDir = a.file === null;
-      const bIsDir = b.file === null;
-      if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
-      return countTreeFiles(b) - countTreeFiles(a);
-    });
-  }, [tree]);
-
-  return (
-    <div>
-      <SectionHeader title="Relabelled Files" badge={String(total)} />
-      <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden max-h-[500px] overflow-y-auto">
-        <div className="py-1">
-          {sortedRootChildren.map((child) => (
-            <RelabelTreeNodeRow key={child.path} node={child} depth={0} />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RelabelTreeNodeRow({ node, depth }: { node: RelabelTreeNode; depth: number }) {
-  const isDir = node.file === null && node.children.size > 0;
-  const [expanded, setExpanded] = useState(depth === 0);
-
-  const fileCount = useMemo(() => (isDir ? countTreeFiles(node) : 0), [isDir, node]);
-
-  // Sort children: dirs first, then alphabetically
-  const sortedChildren = useMemo(() => {
-    return [...node.children.values()].sort((a, b) => {
-      const aIsDir = a.file === null && a.children.size > 0;
-      const bIsDir = b.file === null && b.children.size > 0;
-      if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-  }, [node]);
-
-  return (
-    <div>
-      <div
-        onClick={isDir ? () => setExpanded(!expanded) : undefined}
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
-        className={`
-          flex items-baseline gap-1.5 py-[2px] text-[11px] transition-colors
-          ${isDir ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}
-        `}
-      >
-        {/* Expand arrow (dirs only) */}
-        {isDir ? (
-          <ExpandArrow expanded={expanded} className="text-[9px] text-indigo-500 dark:text-indigo-400 w-3 text-center flex-shrink-0" />
-        ) : (
-          <span className="w-3 flex-shrink-0" />
-        )}
-
-        {/* Icon */}
-        <span className="text-[10px] flex-shrink-0">
-          {isDir ? (
-            <span className="text-amber-500 dark:text-amber-400">{expanded ? '\uD83D\uDCC2' : '\uD83D\uDCC1'}</span>
-          ) : (
-            <span className="text-slate-400 dark:text-gray-500">{'\uD83D\uDCC4'}</span>
-          )}
-        </span>
-
-        {/* Name */}
-        <span className={`font-mono text-[10px] flex-shrink-0 ${isDir ? 'text-slate-800 dark:text-gray-200 font-medium' : 'text-slate-700 dark:text-gray-300'}`}>
-          {node.name}{isDir ? '/' : ''}
-        </span>
-
-        {/* Dir: file count */}
-        {isDir && (
-          <span className="px-1.5 py-0 rounded-full bg-slate-100 dark:bg-slate-800 text-[9px] text-slate-500 dark:text-gray-400">
-            {fileCount}
-          </span>
-        )}
-
-        {/* Leaf: inline context change */}
-        {!isDir && node.file && <InlineContextChange file={node.file} />}
-      </div>
-
-      {/* Dir children */}
-      {isDir && expanded && sortedChildren.map((child) => (
-        <RelabelTreeNodeRow key={child.path} node={child} depth={depth + 1} />
-      ))}
-    </div>
-  );
-}
-
-/** Renders context change inline after the filename: old → new with color coding */
-function InlineContextChange({ file }: { file: RelabeledFile }) {
-  const isNew = file.fromContext === '<no context>';
-
-  // Detect what changed
-  const fromParts = file.fromContext.split(':');
-  const toParts = file.toContext.split(':');
-  const userChanged = !isNew && fromParts[0] !== toParts[0];
-  const typeChanged = !isNew && (fromParts[2] || '') !== (toParts[2] || '');
-
-  // Pick color based on change type
-  const toColor = isNew
-    ? 'text-purple-600 dark:text-purple-400'
-    : userChanged
-      ? 'text-blue-600 dark:text-blue-400'
-      : typeChanged
-        ? 'text-amber-600 dark:text-amber-400'
-        : 'text-slate-500 dark:text-gray-400';
-
-  return (
-    <span className="inline-flex items-center gap-1 ml-1 text-[9px] font-mono overflow-hidden">
-      {isNew ? (
-        <span className={toColor}>{file.toContext}</span>
-      ) : (
-        <>
-          <span className="text-slate-400 dark:text-gray-600 line-through truncate max-w-[180px]" title={file.fromContext}>
-            {file.fromContext}
-          </span>
-          <span className="text-slate-300 dark:text-gray-600 flex-shrink-0">{'\u2192'}</span>
-          <span className={`${toColor} truncate max-w-[180px]`} title={file.toContext}>
-            {file.toContext}
-          </span>
-        </>
-      )}
-    </span>
-  );
-}

@@ -63,7 +63,6 @@ interface ParsedDestination {
   disks: DiskEntry[];
   nics: NicEntry[];
   guestCaps: GuestCaps;
-  osInfo: { [key: string]: string };
   sourceConns: SourceConnection[];
   fsUsage: FsUsage | null;
 }
@@ -75,7 +74,6 @@ function parseDestinationContent(lines: string[]): ParsedDestination {
   const disks: DiskEntry[] = [];
   const nics: NicEntry[] = [];
   const guestCaps: GuestCaps = {};
-  const osInfo: { [key: string]: string } = {};
   const sourceConns: SourceConnection[] = [];
   let fsUsage: FsUsage | null = null;
 
@@ -228,11 +226,6 @@ function parseDestinationContent(lines: string[]): ParsedDestination {
       };
     }
 
-    // ── OS info (i_root = ...) ───────────────────────────────────────
-    const osMatch = line.match(/^i_(\w+)\s+=\s+(.*)$/);
-    if (osMatch && osMatch[2].trim() && !osInfo[osMatch[1]]) {
-      osInfo[osMatch[1]] = osMatch[2].trim();
-    }
   }
 
   // Match output sockets to disks
@@ -251,7 +244,7 @@ function parseDestinationContent(lines: string[]): ParsedDestination {
     disks[idx].sourceVmdk = sourceConns[idx].vmdk;
   }
 
-  return { vmPlan, disks, nics, guestCaps, osInfo, sourceConns, fsUsage };
+  return { vmPlan, disks, nics, guestCaps, sourceConns, fsUsage };
 }
 
 // ── Component ───────────────────────────────────────────────────────────────

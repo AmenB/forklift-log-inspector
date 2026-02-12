@@ -80,11 +80,6 @@ export function VMCard({ vm }: VMCardProps) {
                 ({vm.id})
               </span>
             </h4>
-            {vm.migrationType !== 'Unknown' && (
-              <span className="px-2 py-0.5 rounded text-xs bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400 uppercase font-semibold">
-                {vm.migrationType}
-              </span>
-            )}
             {vm.transferMethod === 'StorageOffload' && (
               <span className="px-2 py-0.5 rounded text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 uppercase font-semibold">
                 Storage Offload

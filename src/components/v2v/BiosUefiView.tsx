@@ -248,12 +248,17 @@ function parseBiosUefi(lines: string[]): ParsedBiosUefi {
     bootType = 'bios';
   }
 
-  // Format A: infer from partition table types
+  // Format A: infer from partition table types and disk layouts
   if (bootType === 'unknown') {
-    const types = Object.values(partTableTypes);
-    if (types.length > 0) {
-      const hasGpt = types.some((t) => t === 'gpt');
-      const hasMsdos = types.some((t) => t === 'msdos');
+    // Collect table types from both part_get_parttype results and parted output
+    const allTableTypes = new Set<string>(Object.values(partTableTypes));
+    for (const d of diskLayouts) {
+      if (d.tableType) allTableTypes.add(d.tableType);
+    }
+
+    if (allTableTypes.size > 0) {
+      const hasGpt = allTableTypes.has('gpt');
+      const hasMsdos = allTableTypes.has('msdos');
       const hasEsp = diskLayouts.some((d) =>
         d.partitions.some(
           (p) => p.flags.includes('esp') || p.flags.includes('boot, esp') || p.name.toLowerCase().includes('efi'),

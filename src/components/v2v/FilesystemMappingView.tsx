@@ -8,7 +8,8 @@
  */
 import { useMemo, useState } from 'react';
 import { formatBytes } from '../../utils/format';
-import { SectionHeader } from './shared';
+import { SectionHeader, Badge, FsTypeBadge } from './shared';
+import { GPT_TYPE_GUIDS } from './constants';
 import { ExpandArrow } from '../common';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -69,18 +70,6 @@ interface MappingData {
   trimOps: TrimOp[];
 }
 
-// Well-known GPT partition type GUIDs
-const GUID_NAMES: Record<string, string> = {
-  'C12A7328-F81F-11D2-BA4B-00A0C93EC93B': 'EFI System',
-  '21686148-6449-6E6F-744E-656564454649': 'BIOS Boot',
-  '0FC63DAF-8483-4772-8E79-3D69D8477DE4': 'Linux Filesystem',
-  'E6D6D379-F507-44C2-A23C-238F2A3DF928': 'Linux LVM',
-  '0657FD6D-A4AB-43C4-84E5-0933C84B4F4F': 'Linux Swap',
-  'A19D880F-05FC-4D3B-A006-743F0F84911E': 'Linux RAID',
-  'EBD0A0A2-B9E5-4433-87C0-68B6B72699C7': 'Microsoft Basic Data',
-  'E3C9E316-0B5C-4DB8-817D-F92DF00215AE': 'Microsoft Reserved',
-  'DE94BBA4-06D1-4D40-A16A-BFD50179D6AC': 'Windows Recovery',
-};
 
 // ── Parser ──────────────────────────────────────────────────────────────────
 
@@ -194,7 +183,7 @@ function parseMappingContent(lines: string[]): MappingData {
               device: sfdiskMatch[1],
               partNum: parseInt(sfdiskMatch[2], 10),
               guid,
-              guidName: GUID_NAMES[guid] || '',
+              guidName: GPT_TYPE_GUIDS[guid] || '',
             });
           }
           break;
@@ -346,17 +335,7 @@ export function isFilesystemMappingStage(name: string): boolean {
 // ── Sub-sections ────────────────────────────────────────────────────────────
 
 function SummaryBadge({ children, color }: { children: React.ReactNode; color: 'green' | 'blue' | 'slate' | 'purple' }) {
-  const colors = {
-    green: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300',
-    blue: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
-    slate: 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-gray-300',
-    purple: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300',
-  };
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${colors[color]}`}>
-      {children}
-    </span>
-  );
+  return <Badge color={color} variant="pill">{children}</Badge>;
 }
 
 // ── Disk Layout ─────────────────────────────────────────────────────────────
@@ -466,25 +445,6 @@ function DiskLayoutSection({
         })}
       </div>
     </div>
-  );
-}
-
-function FsTypeBadge({ fsType }: { fsType: string }) {
-  if (!fsType || fsType === 'unknown') {
-    return <span className="text-[10px] text-slate-400 dark:text-gray-500 italic">unknown</span>;
-  }
-  const colorClass =
-    fsType === 'xfs' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' :
-    fsType === 'ext4' || fsType === 'ext3' || fsType === 'ext2' ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300' :
-    fsType === 'vfat' || fsType === 'fat16' || fsType === 'fat32' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300' :
-    fsType === 'ntfs' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300' :
-    fsType === 'swap' ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300' :
-    'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-gray-300';
-
-  return (
-    <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${colorClass}`}>
-      {fsType}
-    </span>
   );
 }
 
