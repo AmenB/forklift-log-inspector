@@ -122,9 +122,7 @@ function AppContent() {
       <main className="flex-1">
         <UploadZone />
         
-        {v2vData ? (
-          <V2VDashboard />
-        ) : (
+        {plans.length > 0 || events.length > 0 ? (
           <>
             {plans.length > 0 && (
               <>
@@ -136,6 +134,10 @@ function AppContent() {
             {events.length > 0 && <EventTimeline events={events} />}
             <PlansGrid />
           </>
+        ) : v2vData ? (
+          <V2VDashboard />
+        ) : (
+          <PlansGrid />
         )}
       </main>
 
