@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react';
-import { useStore, useShowKeyboardHelp, useEvents } from './store/useStore';
+import { useStore, useShowKeyboardHelp, useEvents, useViewMode } from './store/useStore';
 import { useV2VStore } from './store/useV2VStore';
 import { ToastProvider } from './components/Toast';
 import { Header } from './components/Header';
@@ -44,7 +44,8 @@ function KeyboardShortcutsHelp() {
 function AppContent() {
   const { theme, plans, devMode, initializeTheme, toggleTheme, toggleDevMode, navigatePlan, toggleSelectedPlanExpanded, setShowKeyboardHelp, setSearchQuery } = useStore();
   const events = useEvents();
-  const v2vData = useV2VStore((s) => s.v2vData);
+  const hasV2VData = useV2VStore((s) => s.v2vFileEntries.length > 0);
+  const viewMode = useViewMode();
 
   // Initialize theme from system preference on first load
   useEffect(() => {
@@ -122,7 +123,10 @@ function AppContent() {
       <main className="flex-1">
         <UploadZone />
         
-        {plans.length > 0 || events.length > 0 ? (
+        {/* V2V analysis view — shown when user navigates to it */}
+        {viewMode === 'v2v' && hasV2VData ? (
+          <V2VDashboard />
+        ) : plans.length > 0 || events.length > 0 ? (
           <>
             {plans.length > 0 && (
               <>
@@ -134,7 +138,7 @@ function AppContent() {
             {events.length > 0 && <EventTimeline events={events} />}
             <PlansGrid />
           </>
-        ) : v2vData ? (
+        ) : hasV2VData ? (
           <V2VDashboard />
         ) : (
           <PlansGrid />

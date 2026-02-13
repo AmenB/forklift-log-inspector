@@ -56,6 +56,14 @@ export {
   isLinuxConversionContent,
 } from './linuxConversion';
 
+// pathClassifier
+export {
+  V2V_PATH_RE,
+  NON_LOG_EXTENSIONS,
+  isV2VLogByPath,
+  extractV2VPathMeta,
+} from './pathClassifier';
+
 // windowsConversion
 export {
   type WindowsOSInfo,

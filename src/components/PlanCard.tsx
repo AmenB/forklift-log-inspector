@@ -259,7 +259,7 @@ export function PlanCard({ plan }: PlanCardProps) {
               </h4>
               <div className="space-y-3">
                 {vms.map((vm) => (
-                  <VMCard key={vm.id} vm={vm} />
+                  <VMCard key={vm.id} vm={vm} planName={plan.name} />
                 ))}
               </div>
             </div>

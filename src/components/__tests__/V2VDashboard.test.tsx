@@ -45,10 +45,12 @@ describe('V2VDashboard', () => {
   });
 
   it('renders dashboard content when data is loaded', () => {
-    useV2VStore.getState().setV2VData(minimalV2VData);
+    useV2VStore.getState().setV2VFileEntries([
+      { filePath: 'test.log', data: minimalV2VData },
+    ]);
     render(<V2VDashboard />);
 
-    expect(useV2VStore.getState().v2vData).not.toBeNull();
+    expect(useV2VStore.getState().v2vFileEntries.length).toBe(1);
     expect(screen.getAllByText(/V2V Log Analysis/i).length).toBeGreaterThan(0);
   });
 });

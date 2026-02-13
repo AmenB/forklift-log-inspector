@@ -1,12 +1,15 @@
 /**
- * Browser-based tar/gzip extraction with recursive nested tar support.
+ * Browser-based tar/gzip/zip extraction with recursive nested archive support.
  *
  * Uses the native DecompressionStream API for gzip and manually parses
  * the tar format (512-byte headers).  Gzipped archives are parsed in a
  * **streaming** fashion so the entire decompressed content is never held
- * in memory at once.  Nested .tar / .tar.gz / .tgz entries are
- * recursively extracted and flattened into a single list.
+ * in memory at once.  ZIP files are extracted via the `fflate` library.
+ * Nested .tar / .tar.gz / .tgz / .zip entries are recursively extracted
+ * and flattened into a single list.
  */
+
+import { unzip as fflateUnzip } from 'fflate';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -28,6 +31,30 @@ const GZIP_MAGIC_1 = 0x8b;
 /** Skip individual files larger than this (50 MB) to avoid memory pressure */
 const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
 
+/**
+ * File extensions that are definitely not text/log/yaml content.
+ * Skipping these avoids the cost of UTF-8 decoding + string allocation
+ * for files that will never match any classifier.
+ */
+const SKIP_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.svg', '.bmp',
+  '.mp4', '.webm', '.avi', '.mov', '.mp3', '.wav', '.ogg',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.exe', '.dll', '.so', '.dylib', '.o', '.a',
+  '.class', '.pyc', '.pyo', '.wasm',
+  '.db', '.sqlite', '.sqlite3',
+  '.rpm', '.deb', '.dmg', '.iso',
+]);
+
+/** Check if a file path ends with a known non-text extension */
+function shouldSkipByExtension(path: string): boolean {
+  const lower = path.toLowerCase();
+  const dotIdx = lower.lastIndexOf('.');
+  if (dotIdx === -1) return false;
+  return SKIP_EXTENSIONS.has(lower.slice(dotIdx));
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -39,26 +66,19 @@ export async function extractArchive(
   input: File | Uint8Array,
   pathPrefix = '',
 ): Promise<TarEntry[]> {
-  let rawEntries: TarEntry[];
+  const bytes = input instanceof File
+    ? new Uint8Array(await input.arrayBuffer())
+    : input;
 
-  if (input instanceof File) {
-    // File → read as ArrayBuffer, then decide gzip vs plain tar
-    const buf = await input.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-
-    if (isGzip(bytes)) {
-      rawEntries = await streamParseGzippedTar(bytes, pathPrefix);
-    } else {
-      rawEntries = parseTarBytes(bytes, pathPrefix);
-    }
-  } else {
-    // Uint8Array (nested archive bytes already in memory)
-    if (isGzip(input)) {
-      rawEntries = await streamParseGzippedTar(input, pathPrefix);
-    } else {
-      rawEntries = parseTarBytes(input, pathPrefix);
-    }
+  // Route to ZIP extractor if the content is a ZIP file
+  if (isZip(bytes)) {
+    return extractZip(bytes, pathPrefix);
   }
+
+  // Otherwise handle as tar (gzipped or plain)
+  const rawEntries = isGzip(bytes)
+    ? await streamParseGzippedTar(bytes, pathPrefix)
+    : parseTarBytes(bytes, pathPrefix);
 
   // Recursively extract nested archives
   return flattenNestedArchives(rawEntries);
@@ -72,10 +92,11 @@ async function flattenNestedArchives(entries: TarEntry[]): Promise<TarEntry[]> {
   for (const entry of entries) {
     if (isArchiveEntry(entry.path)) {
       try {
-        const nested = await extractArchive(
-          entry.rawBytes,
-          stripArchiveExt(entry.path),
-        );
+        const prefix = stripArchiveExt(entry.path);
+        // Route to the right extractor based on content magic bytes
+        const nested = isZip(entry.rawBytes)
+          ? await extractZip(entry.rawBytes, prefix)
+          : await extractArchive(entry.rawBytes, prefix);
         result.push(...nested);
       } catch {
         // If nested extraction fails, keep the entry as-is
@@ -301,6 +322,12 @@ async function processHeader(
     return null;
   }
 
+  // Skip known binary/media files (avoids costly UTF-8 decode + string alloc)
+  if (!isArchiveEntry(fullPath) && shouldSkipByExtension(fullPath)) {
+    await buf.skip(aligned);
+    return null;
+  }
+
   // Read file content
   const rawBytes = await buf.readExact(aligned);
   if (!rawBytes) return null;
@@ -369,13 +396,14 @@ function parseTarBytes(bytes: Uint8Array, pathPrefix: string): TarEntry[] {
     name = name.replace(/\0+$/, '');
     const fullPath = pathPrefix ? `${pathPrefix}/${name}` : name;
 
-    // Skip directories, empty, non-regular, oversized
+    // Skip directories, empty, non-regular, oversized, known-binary
     if (
       typeFlag === '5' ||
       name.endsWith('/') ||
       size === 0 ||
       (typeFlag !== '0' && typeFlag !== '' && typeFlag !== '\0') ||
-      size > MAX_ENTRY_BYTES
+      size > MAX_ENTRY_BYTES ||
+      (!isArchiveEntry(fullPath) && shouldSkipByExtension(fullPath))
     ) {
       offset += alignToBlock(size);
       continue;
@@ -391,7 +419,71 @@ function parseTarBytes(bytes: Uint8Array, pathPrefix: string): TarEntry[] {
   return entries;
 }
 
+// ── ZIP extraction ────────────────────────────────────────────────────────
+
+const ZIP_MAGIC_0 = 0x50; // 'P'
+const ZIP_MAGIC_1 = 0x4b; // 'K'
+
+function isZip(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 4 &&
+    bytes[0] === ZIP_MAGIC_0 &&
+    bytes[1] === ZIP_MAGIC_1 &&
+    (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07) &&
+    (bytes[3] === 0x04 || bytes[3] === 0x06 || bytes[3] === 0x08)
+  );
+}
+
+/**
+ * Wrap fflate's callback-based unzip in a Promise.
+ */
+function unzipAsync(data: Uint8Array): Promise<Record<string, Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    fflateUnzip(data, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+}
+
+/**
+ * Extract all files from a ZIP archive.
+ * Returns TarEntry[] for compatibility with the rest of the pipeline.
+ */
+export async function extractZip(
+  input: File | Uint8Array,
+  pathPrefix = '',
+): Promise<TarEntry[]> {
+  const bytes = input instanceof File
+    ? new Uint8Array(await input.arrayBuffer())
+    : input;
+
+  const files = await unzipAsync(bytes);
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  const entries: TarEntry[] = [];
+
+  for (const [name, data] of Object.entries(files)) {
+    // Skip directories (fflate includes them as empty entries)
+    if (name.endsWith('/') || data.length === 0) continue;
+    // Skip oversized entries
+    if (data.length > MAX_ENTRY_BYTES) continue;
+    const fullPath = pathPrefix ? `${pathPrefix}/${name}` : name;
+    // Skip known binary/media files
+    if (!isArchiveEntry(fullPath) && shouldSkipByExtension(name)) continue;
+    const content = decoder.decode(data);
+    entries.push({ path: fullPath, content, rawBytes: data });
+  }
+
+  // Recursively extract nested archives
+  return flattenNestedArchives(entries);
+}
+
 // ── Public Helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Check whether raw bytes represent a ZIP archive.
+ */
+export { isZip };
 
 /**
  * Decompress a gzipped file (non-tar) and return the text content.
@@ -473,13 +565,14 @@ function alignToBlock(size: number): number {
   return Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
 }
 
-/** Check if a path looks like a tar archive entry */
+/** Check if a path looks like an archive entry (tar or zip) */
 function isArchiveEntry(path: string): boolean {
   const lower = path.toLowerCase();
   return (
     lower.endsWith('.tar') ||
     lower.endsWith('.tar.gz') ||
-    lower.endsWith('.tgz')
+    lower.endsWith('.tgz') ||
+    lower.endsWith('.zip')
   );
 }
 
@@ -489,5 +582,6 @@ function stripArchiveExt(path: string): string {
   if (lower.endsWith('.tar.gz')) return path.slice(0, -7);
   if (lower.endsWith('.tgz')) return path.slice(0, -4);
   if (lower.endsWith('.tar')) return path.slice(0, -4);
+  if (lower.endsWith('.zip')) return path.slice(0, -4);
   return path;
 }

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { V2VToolRun } from '../../types/v2v';
 import { useV2VStore } from '../../store/useV2VStore';
-import { useDevMode } from '../../store/useStore';
+import { useDevMode, useStore } from '../../store/useStore';
 import { V2VPipelineView } from './V2VPipelineView';
 import { V2VCommandsPanel } from './V2VCommandsPanel';
 import { V2VFileTree } from './V2VFileTree';
@@ -18,10 +18,16 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 export function V2VDashboard() {
-  const v2vData = useV2VStore((s) => s.v2vData);
+  const v2vFileEntries = useV2VStore((s) => s.v2vFileEntries);
+  const selectedFileIndex = useV2VStore((s) => s.selectedFileIndex);
   const selectedToolRun = useV2VStore((s) => s.selectedToolRun);
   const { setSelectedToolRun } = useV2VStore();
   const devMode = useDevMode();
+  const plans = useStore((s) => s.plans);
+  const setViewMode = useStore((s) => s.setViewMode);
+
+  const v2vData = v2vFileEntries[selectedFileIndex]?.data ?? null;
+  const currentFilePath = v2vFileEntries[selectedFileIndex]?.filePath;
 
   const currentRun = useMemo(() => {
     if (!v2vData || v2vData.toolRuns.length === 0) return null;
@@ -70,11 +76,24 @@ export function V2VDashboard() {
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-4 space-y-4">
+      {/* Back to Plans */}
+      {plans.length > 0 && (
+        <button
+          onClick={() => setViewMode('plans')}
+          className="inline-flex items-center gap-1.5 text-sm text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-gray-200 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to Plans
+        </button>
+      )}
+
       {/* Exit status banner */}
       <ExitStatusBanner toolRun={currentRun} />
 
       {/* Header bar */}
-      <div className="flex items-center justify-between">
+      <div className="space-y-1">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-gray-100">
             V2V Log Analysis
@@ -82,12 +101,12 @@ export function V2VDashboard() {
           <span className="text-xs text-slate-500 dark:text-gray-400">
             {v2vData.totalLines.toLocaleString()} total lines
           </span>
-          {v2vData.fileName && (
-            <span className="text-xs font-mono text-slate-400 dark:text-gray-500 truncate max-w-[300px]" title={v2vData.fileName}>
-              {v2vData.fileName}
-            </span>
-          )}
         </div>
+        {currentFilePath && (
+          <p className="text-xs font-mono text-slate-400 dark:text-gray-500 truncate" title={currentFilePath}>
+            {currentFilePath}
+          </p>
+        )}
       </div>
 
       {/* Tool run tabs */}

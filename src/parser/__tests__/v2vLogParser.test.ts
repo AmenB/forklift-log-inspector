@@ -837,6 +837,300 @@ describe('parseV2VLog – hivex registry', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// Disk progress
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('parseV2VLog – disk progress', () => {
+  it('parses disk copy progress from monitoring lines', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      '[   0.0] Setting up the source',
+      'virt-v2v monitoring: Copying disk 1 out of 2',
+      'virt-v2v monitoring: Progress update, completed 25 %',
+      'virt-v2v monitoring: Progress update, completed 50 %',
+      'virt-v2v monitoring: Copying disk 2 out of 2',
+      'virt-v2v monitoring: Progress update, completed 100 %',
+      '[ 100.0] Finishing off',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const dp = result.toolRuns[0].diskProgress;
+    expect(dp.length).toBeGreaterThanOrEqual(4);
+    // First disk entry
+    expect(dp[0].diskNumber).toBe(1);
+    expect(dp[0].totalDisks).toBe(2);
+    expect(dp[0].percentComplete).toBe(0);
+    // Progress updates for disk 1
+    expect(dp[1].diskNumber).toBe(1);
+    expect(dp[1].percentComplete).toBe(25);
+    expect(dp[2].diskNumber).toBe(1);
+    expect(dp[2].percentComplete).toBe(50);
+    // Disk 2
+    expect(dp[3].diskNumber).toBe(2);
+    expect(dp[3].totalDisks).toBe(2);
+  });
+
+  it('returns empty diskProgress when no monitoring lines', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      '[   0.0] Setting up the source',
+      '[ 100.0] Finishing off',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    expect(result.toolRuns[0].diskProgress).toHaveLength(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// API calls
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('parseV2VLog – API calls', () => {
+  it('parses libguestfs trace lines into V2VApiCall objects', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      'libguestfs: trace: v2v: vfs_type "/dev/sda1"',
+      'libguestfs: trace: v2v: vfs_type = "ntfs"',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const apis = result.toolRuns[0].apiCalls;
+    const vfsCall = apis.find((a) => a.name === 'vfs_type');
+    expect(vfsCall).toBeDefined();
+    expect(vfsCall!.args).toContain('/dev/sda1');
+    expect(vfsCall!.result).toBe('"ntfs"');
+    expect(vfsCall!.handle).toBe('v2v');
+  });
+
+  it('attaches guestfsd duration to API calls', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      'libguestfs: trace: v2v: list_partitions',
+      'guestfsd: <= list_partitions (0x8) request length 40 bytes',
+      'guestfsd: => list_partitions (0x8) took 0.04 secs',
+      'libguestfs: trace: v2v: list_partitions = "/dev/sda1 /dev/sda2"',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const apis = result.toolRuns[0].apiCalls;
+    const call = apis.find((a) => a.name === 'list_partitions');
+    expect(call).toBeDefined();
+    expect(call!.durationSecs).toBeCloseTo(0.04);
+  });
+
+  it('nests guest commands inside API calls via guestfsd scope', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      'libguestfs: trace: v2v: is_file "/etc/hostname"',
+      'guestfsd: <= is_file (0x28) request length 80 bytes',
+      'command: stat /etc/hostname',
+      'command: stat returned 0',
+      'guestfsd: => is_file (0x28) took 0.01 secs',
+      'libguestfs: trace: v2v: is_file = 1',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const apis = result.toolRuns[0].apiCalls;
+    const call = apis.find((a) => a.name === 'is_file');
+    expect(call).toBeDefined();
+    expect(call!.guestCommands.length).toBeGreaterThanOrEqual(1);
+    expect(call!.guestCommands[0].command).toBe('stat');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Installed apps
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('parseV2VLog – installed apps', () => {
+  it('parses inspect_list_applications2 result into installed apps', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      'libguestfs: trace: v2v: inspect_list_applications2 "/dev/sda2"',
+      'libguestfs: trace: v2v: inspect_list_applications2 = <struct guestfs_application2_list(2) = [0]{app2_name: MyApp, app2_display_name: My Application, app2_version: 1.2.3, app2_publisher: Acme Corp, app2_install_path: C:\\Program Files\\MyApp, app2_description: Test app, app2_arch: x86_64} [1]{app2_name: Other, app2_display_name: Other App, app2_version: 4.5.6, app2_publisher: Other Corp, app2_install_path: , app2_description: , app2_arch: x86_64}>',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const apps = result.toolRuns[0].installedApps;
+    expect(apps).toHaveLength(2);
+    expect(apps[0].name).toBe('MyApp');
+    expect(apps[0].displayName).toBe('My Application');
+    expect(apps[0].version).toBe('1.2.3');
+    expect(apps[0].publisher).toBe('Acme Corp');
+    expect(apps[1].name).toBe('Other');
+    expect(apps[1].version).toBe('4.5.6');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Line categories
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('parseV2VLog – line categories', () => {
+  it('assigns correct categories to different line types', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      '[   0.0] Setting up the source',
+      'nbdkit: debug: TLS disabled',
+      'libguestfs: trace: v2v: version',
+      'guestfsd: <= list_partitions (0x8)',
+      'command: blkid -c',
+      'virt-v2v monitoring: Finished',
+      '[ 100.0] Finishing off',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const cats = result.toolRuns[0].lineCategories;
+    // Line 0 = info (Building command starts with "Building")
+    // Line 1 = stage (pipeline stage)
+    expect(cats[1]).toBe('stage');
+    // Line 2 = nbdkit
+    expect(cats[2]).toBe('nbdkit');
+    // Line 3 = libguestfs
+    expect(cats[3]).toBe('libguestfs');
+    // Line 4 = guestfsd
+    expect(cats[4]).toBe('guestfsd');
+    // Line 5 = command
+    expect(cats[5]).toBe('command');
+    // Line 6 = monitor
+    expect(cats[6]).toBe('monitor');
+    // Line 7 = stage
+    expect(cats[7]).toBe('stage');
+  });
+
+  it('categorizes error and warning lines', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      'virt-v2v: error: some fatal error occurred',
+      'virt-v2v: warning: something is not right',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const cats = result.toolRuns[0].lineCategories;
+    expect(cats[1]).toBe('error');
+    expect(cats[2]).toBe('warning');
+  });
+
+  it('lineCategories length matches rawLines length', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      '[   0.0] Setting up the source',
+      'some other line',
+      '[ 100.0] Finishing off',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const run = result.toolRuns[0];
+    expect(run.lineCategories.length).toBe(run.rawLines.length);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Disk summary
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('parseV2VLog – disk summary', () => {
+  it('parses check_host_free_space into diskSummary', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      'check_host_free_space: large_tmpdir=/var/tmp free_space=56748552192',
+      '[   0.0] Setting up the source',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const ds = result.toolRuns[0].diskSummary;
+    expect(ds.hostTmpDir).toBe('/var/tmp');
+    expect(ds.hostFreeSpace).toBe(56748552192);
+  });
+
+  it('builds per-disk info from nbdkit connections', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      'running nbdkit:',
+      " LANG=C 'nbdkit' '--unix' '/tmp/v2v/in0' 'vddk'",
+      'nbdkit: debug: config key=server, value=10.6.46.159',
+      'nbdkit: debug: config key=vm, value=moref=vm-152',
+      'nbdkit: debug: transport mode: nbdssl',
+      'nbdkit: debug: NBD URI: nbd+unix:///?socket=/tmp/v2v/in0',
+      '[   0.0] Setting up the source',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const ds = result.toolRuns[0].diskSummary;
+    expect(ds.disks.length).toBeGreaterThanOrEqual(1);
+    expect(ds.disks[0].index).toBe(1);
+    expect(ds.disks[0].server).toBe('10.6.46.159');
+    expect(ds.disks[0].vmMoref).toBe('vm-152');
+    expect(ds.disks[0].transportMode).toBe('nbdssl');
+  });
+
+  it('returns empty disk summary when no data', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      '[   0.0] Setting up the source',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const ds = result.toolRuns[0].diskSummary;
+    expect(ds.disks).toHaveLength(0);
+    expect(ds.hostFreeSpace).toBeUndefined();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Blkid
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('parseV2VLog – blkid', () => {
+  it('parses blkid output into guest info blkid entries', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      'inspect_os: fses:',
+      'fs: /dev/sda1 (xfs) role: root',
+      '    type: linux',
+      '    distro: rhel',
+      '/dev/sda1: UUID="abc-123" TYPE="xfs" PARTLABEL="Linux filesystem"',
+      '/dev/sda2: UUID="def-456" TYPE="vfat" PARTUUID="7c1f7103-abcd"',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const info = result.toolRuns[0].guestInfo;
+    expect(info).not.toBeNull();
+    expect(info!.blkid.length).toBeGreaterThanOrEqual(2);
+
+    const sda1 = info!.blkid.find((e) => e.device === '/dev/sda1');
+    expect(sda1).toBeDefined();
+    expect(sda1!.uuid).toBe('abc-123');
+    expect(sda1!.type).toBe('xfs');
+    expect(sda1!.partLabel).toBe('Linux filesystem');
+
+    const sda2 = info!.blkid.find((e) => e.device === '/dev/sda2');
+    expect(sda2).toBeDefined();
+    expect(sda2!.uuid).toBe('def-456');
+    expect(sda2!.type).toBe('vfat');
+    expect(sda2!.partUuid).toBe('7c1f7103-abcd');
+  });
+
+  it('deduplicates blkid entries by device', () => {
+    const log = [
+      'Building command: virt-v2v [-v]',
+      'inspect_os: fses:',
+      'fs: /dev/sda1 (xfs) role: root',
+      '    type: linux',
+      '    distro: rhel',
+      '/dev/sda1: UUID="abc-123" TYPE="xfs"',
+      '/dev/sda1: UUID="abc-123" TYPE="xfs"',
+    ].join('\n');
+
+    const result = parseV2VLog(log);
+    const blkid = result.toolRuns[0].guestInfo!.blkid;
+    const sda1Entries = blkid.filter((e) => e.device === '/dev/sda1');
+    expect(sda1Entries).toHaveLength(1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // Edge cases
 // ────────────────────────────────────────────────────────────────────────────
 

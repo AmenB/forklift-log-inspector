@@ -252,8 +252,8 @@ export interface ArchiveResult {
   v2vFiles: string[];
   /** The merged ParsedData ready for the store */
   parsedData: ParsedData;
-  /** Parsed v2v data (if v2v logs were found in the archive) */
-  v2vData?: import('../types/v2v').V2VParsedData;
+  /** Per-file parsed V2V data (each file parsed individually) */
+  v2vFileEntries: import('../types/v2v').V2VFileEntry[];
 }
 
 // Log entry as parsed from JSON

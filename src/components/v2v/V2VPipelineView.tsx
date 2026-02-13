@@ -1,11 +1,11 @@
-import { useMemo, useState, useEffect, useCallback, useRef, memo, type ReactNode } from 'react';
+import { useMemo, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { V2VToolRun, V2VDiskProgress, V2VHostCommand } from '../../types/v2v';
 import { LineLink, LineLinkNavigateContext } from './LineLink';
 import { StageFileOpsTree } from './V2VFileTree';
 import { groupHiveAccesses, HiveGroupCard } from './RegistryAppsPanel';
 import { formatDuration } from '../../utils/format';
-import { highlightSearch } from './shared';
+import { VirtualizedLogViewer } from './VirtualizedLogViewer';
 import {
   isInspectStage,
   isOpenSourceStage,
@@ -560,16 +560,7 @@ function StageHostCommands({ commands }: { commands: V2VHostCommand[] }) {
   );
 }
 
-// ── Raw log with search (virtualized) ───────────────────────────────────────
-
-/** Row height in pixels for virtual scrolling */
-const RAW_ROW_HEIGHT = 18;
-/** Extra rows rendered above/below viewport */
-const RAW_OVERSCAN = 30;
-/** Container viewport height in pixels */
-const RAW_VIEWPORT_HEIGHT = 520;
-/** Debounce delay for search input (ms) */
-const RAW_SEARCH_DEBOUNCE_MS = 150;
+// ── Raw log with search (uses shared VirtualizedLogViewer) ──────────────────
 
 function RawLogWithSearch({
   content,
@@ -580,227 +571,15 @@ function RawLogWithSearch({
   search: string;
   onSearchChange: (v: string) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [localSearch, setLocalSearch] = useState(search);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
-
-  // Pre-lowercase all lines once — avoids re-lowercasing on every search query change
-  const lowerLines = useMemo(
-    () => content.map((line) => line.toLowerCase()),
-    [content],
-  );
-
-  const lowerSearch = useMemo(() => search.toLowerCase(), [search]);
-
-  // Debounced search propagation
-  const handleSearchChange = useCallback(
-    (value: string) => {
-      setLocalSearch(value);
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      searchTimerRef.current = setTimeout(() => {
-        onSearchChange(value);
-      }, RAW_SEARCH_DEBOUNCE_MS);
-    },
-    [onSearchChange],
-  );
-
-  // Sync local search when parent changes it
-  useEffect(() => {
-    setLocalSearch(search);
-  }, [search]);
-
-  // Indices of lines that match the search (using pre-lowered lines)
-  const matchLineIndices = useMemo(() => {
-    if (!lowerSearch) return [];
-    const indices: number[] = [];
-    for (let i = 0; i < lowerLines.length; i++) {
-      if (lowerLines[i].includes(lowerSearch)) indices.push(i);
-    }
-    return indices;
-  }, [lowerLines, lowerSearch]);
-
-  // Set for O(1) match lookup during rendering
-  const matchSet = useMemo(() => new Set(matchLineIndices), [matchLineIndices]);
-
-  const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
-
-  // Reset current match when search changes
-  useEffect(() => {
-    setCurrentMatchIdx(0);
-  }, [lowerSearch]);
-
-  // Auto-scroll to current search match within the virtual scroll container
-  useEffect(() => {
-    if (matchLineIndices.length === 0 || !containerRef.current) return;
-    const lineIdx = matchLineIndices[currentMatchIdx];
-    if (lineIdx === undefined) return;
-    const targetScroll = Math.max(0, lineIdx * RAW_ROW_HEIGHT - RAW_VIEWPORT_HEIGHT / 2);
-    containerRef.current.scrollTop = targetScroll;
-    setScrollTop(targetScroll);
-  }, [currentMatchIdx, matchLineIndices]);
-
-  const goNext = useCallback(() => {
-    if (matchLineIndices.length === 0) return;
-    setCurrentMatchIdx((prev) => (prev + 1) % matchLineIndices.length);
-  }, [matchLineIndices.length]);
-
-  const goPrev = useCallback(() => {
-    if (matchLineIndices.length === 0) return;
-    setCurrentMatchIdx((prev) => (prev - 1 + matchLineIndices.length) % matchLineIndices.length);
-  }, [matchLineIndices.length]);
-
-  const currentMatchLine = matchLineIndices.length > 0 ? matchLineIndices[currentMatchIdx] : -1;
-
-  // Track scroll position — throttled with rAF
-  const rafRef = useRef(0);
-  const handleScroll = useCallback(() => {
-    if (rafRef.current) return;
-    rafRef.current = requestAnimationFrame(() => {
-      const el = containerRef.current;
-      if (el) setScrollTop(el.scrollTop);
-      rafRef.current = 0;
-    });
-  }, []);
-
-  // ── Virtual scroll calculations ─────────────────────────────────
-  const totalHeight = content.length * RAW_ROW_HEIGHT;
-  const startIdx = Math.max(0, Math.floor(scrollTop / RAW_ROW_HEIGHT) - RAW_OVERSCAN);
-  const endIdx = Math.min(
-    content.length,
-    Math.ceil((scrollTop + RAW_VIEWPORT_HEIGHT) / RAW_ROW_HEIGHT) + RAW_OVERSCAN,
-  );
-  const visibleLines = content.slice(startIdx, endIdx);
-  const offsetTop = startIdx * RAW_ROW_HEIGHT;
-
   return (
-    <div className="flex flex-col">
-      {/* Search bar — sticky so it stays visible when scrolling */}
-      <div className="flex items-center gap-2 px-5 py-2 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex-shrink-0">
-        <svg className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          type="text"
-          placeholder="Search raw log..."
-          aria-label="Search raw log"
-          value={localSearch}
-          onChange={(e) => handleSearchChange(e.target.value)}
-          className="flex-1 text-xs px-2 py-1 border border-slate-200 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-gray-100 placeholder:text-slate-400 outline-none focus:border-indigo-400 dark:focus:border-indigo-500"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && localSearch) {
-              e.stopPropagation();
-              handleSearchChange('');
-            } else if (e.key === 'Enter') {
-              e.preventDefault();
-              if (e.shiftKey) goPrev();
-              else goNext();
-            }
-          }}
-        />
-        {lowerSearch && matchLineIndices.length > 0 && (
-          <>
-            <span className="text-[10px] text-slate-400 dark:text-gray-500 flex-shrink-0 tabular-nums">
-              {currentMatchIdx + 1} / {matchLineIndices.length}
-            </span>
-            <button
-              onClick={goPrev}
-              className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-              title="Previous match (Shift+Enter)"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-              </svg>
-            </button>
-            <button
-              onClick={goNext}
-              className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-              title="Next match (Enter)"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-          </>
-        )}
-        {lowerSearch && matchLineIndices.length === 0 && (
-          <span className="text-[10px] text-red-400 dark:text-red-500 flex-shrink-0">
-            No matches
-          </span>
-        )}
-        {localSearch && (
-          <button
-            onClick={() => handleSearchChange('')}
-            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-            title="Clear search"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        )}
-      </div>
-
-      {/* Log content — virtual scrolling */}
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="font-mono text-[11px] leading-[1.6] text-slate-800 dark:text-gray-200 overflow-auto"
-        style={{ maxHeight: RAW_VIEWPORT_HEIGHT }}
-      >
-        <div style={{ height: totalHeight, position: 'relative', minWidth: 'fit-content' }}>
-          <div style={{ position: 'absolute', top: offsetTop, left: 0, right: 0 }}>
-            {visibleLines.map((line, vi) => {
-              const lineIdx = startIdx + vi;
-              const isMatch = matchSet.has(lineIdx);
-              return (
-                <RawLogRow
-                  key={lineIdx}
-                  text={line}
-                  isMatch={isMatch}
-                  isCurrent={lineIdx === currentMatchLine}
-                  searchQuery={isMatch ? search : ''}
-                />
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Line count */}
-      <div className="px-5 py-1 text-[10px] text-slate-400 dark:text-gray-500 border-t border-slate-200 dark:border-slate-700 flex-shrink-0">
-        {content.length.toLocaleString()} lines
-      </div>
-    </div>
+    <VirtualizedLogViewer
+      lines={content}
+      search={search}
+      onSearchChange={onSearchChange}
+      config={{ searchPlaceholder: 'Search raw log...' }}
+    />
   );
 }
-
-// ── Memoized raw log row ────────────────────────────────────────────────────
-
-interface RawLogRowProps {
-  text: string;
-  isMatch: boolean;
-  isCurrent: boolean;
-  searchQuery: string;
-}
-
-const RawLogRow = memo(function RawLogRow({ text, isMatch, isCurrent, searchQuery }: RawLogRowProps) {
-  let bg = '';
-  if (isCurrent) {
-    bg = 'bg-yellow-200 dark:bg-yellow-900/40';
-  } else if (isMatch) {
-    bg = 'bg-yellow-100/60 dark:bg-yellow-900/20';
-  }
-
-  return (
-    <div
-      className={`whitespace-pre px-5 ${bg}`}
-      style={{ height: RAW_ROW_HEIGHT }}
-    >
-      {isMatch && searchQuery ? highlightSearch(text, searchQuery) : text}
-    </div>
-  );
-});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

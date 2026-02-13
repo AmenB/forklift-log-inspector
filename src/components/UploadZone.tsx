@@ -5,17 +5,18 @@ import { useToast } from './Toast';
 import { parseLogFile, parsePlanYaml, isYamlContent, isV2VLog, parseV2VLog, decompressGzipToText } from '../parser';
 import { processArchive } from '../parser/archiveProcessor';
 import { mergeResults } from '../parser/mergeResults';
-import type { ParsedData } from '../types';
-import type { V2VParsedData } from '../types/v2v';
+import type { ParsedData, ArchiveResult } from '../types';
+import type { V2VFileEntry } from '../types/v2v';
+import type { WorkerOutMessage } from '../parser/archiveWorker';
 
 /** Extensions for plain text files handled directly */
 const PLAIN_EXTENSIONS = ['.log', '.logs', '.txt', '.json', '.yaml', '.yml'];
 
-/** Extensions that indicate a tar archive */
-const ARCHIVE_EXTENSIONS = ['.tar', '.tgz'];
+/** Extensions that indicate an archive */
+const ARCHIVE_EXTENSIONS = ['.tar', '.tgz', '.zip'];
 
 /**
- * Detect whether a filename refers to a tar archive.
+ * Detect whether a filename refers to an archive (tar, tar.gz, tgz, or zip).
  * Handles compound extensions like `.tar.gz`.
  */
 function isArchiveFile(name: string): boolean {
@@ -60,9 +61,69 @@ function isYamlFile(name: string, content: string): boolean {
   return ext === '.yaml' || ext === '.yml' || isYamlContent(content);
 }
 
+// ── Worker-based archive processing ──────────────────────────────────────
+
+/**
+ * Process an archive file in a Web Worker (if available) for non-blocking
+ * extraction and parsing. Falls back to main-thread processing when
+ * workers are unavailable (e.g. in tests).
+ */
+function processArchiveInWorker(
+  file: File,
+  onProgress: (stage: string, detail?: string) => void,
+): Promise<ArchiveResult> {
+  // Fall back to main-thread processing when Workers are not available
+  if (typeof Worker === 'undefined') {
+    return processArchive(file, onProgress);
+  }
+
+  return new Promise((resolve, reject) => {
+    let worker: Worker;
+    try {
+      worker = new Worker(
+        new URL('../parser/archiveWorker.ts', import.meta.url),
+        { type: 'module' },
+      );
+    } catch {
+      // Worker creation failed (e.g. CSP restrictions) — fallback
+      return processArchive(file, onProgress).then(resolve, reject);
+    }
+
+    worker.onmessage = (event: MessageEvent<WorkerOutMessage>) => {
+      const msg = event.data;
+      switch (msg.type) {
+        case 'progress':
+          onProgress(msg.stage, msg.detail);
+          break;
+        case 'result':
+          worker.terminate();
+          resolve(msg.data);
+          break;
+        case 'error':
+          worker.terminate();
+          reject(new Error(msg.message));
+          break;
+      }
+    };
+
+    worker.onerror = (err) => {
+      worker.terminate();
+      // Fallback to main-thread processing on worker errors
+      processArchive(file, onProgress).then(resolve, reject);
+      err.preventDefault();
+    };
+
+    worker.postMessage({ type: 'processArchive', file });
+  });
+}
+
+// ── Component ────────────────────────────────────────────────────────────
+
 export function UploadZone() {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [progressStage, setProgressStage] = useState('');
+  const [progressDetail, setProgressDetail] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { setParseResult, clearData } = useStore();
   const { showToast } = useToast();
@@ -80,7 +141,7 @@ export function UploadZone() {
     const invalid = files.filter(f => !isValidFile(f.name));
     if (invalid.length > 0) {
       showToast(
-        `Skipped ${invalid.length} invalid file${invalid.length !== 1 ? 's' : ''}. Allowed: ${[...PLAIN_EXTENSIONS, '.log.gz', '.tar', '.tar.gz', '.tgz'].join(', ')}`,
+        `Skipped ${invalid.length} invalid file${invalid.length !== 1 ? 's' : ''}. Allowed: ${[...PLAIN_EXTENSIONS, '.log.gz', '.tar', '.tar.gz', '.tgz', '.zip'].join(', ')}`,
         'error',
       );
     }
@@ -89,6 +150,8 @@ export function UploadZone() {
     if (valid.length === 0) return;
 
     setIsProcessing(true);
+    setProgressStage('');
+    setProgressDetail('');
 
     try {
       clearData();
@@ -97,16 +160,19 @@ export function UploadZone() {
       // Accumulate all log content and YAML content across all files
       const logContents: string[] = [];
       const yamlContents: string[] = [];
-      const v2vContents: string[] = [];
-      const archiveV2VResults: V2VParsedData[] = [];
+      const v2vPlainFiles: { name: string; content: string }[] = [];
+      const allV2VFileEntries: V2VFileEntry[] = [];
       const archiveParsedResults: ParsedData[] = [];
       let archiveLogCount = 0;
       let archiveYamlCount = 0;
 
       for (const file of valid) {
         if (isArchiveFile(file.name)) {
-          // ── Archive: extract, classify, parse, merge ──────────────
-          const result = await processArchive(file);
+          // ── Archive: extract, classify, parse, merge (in worker) ────
+          const result = await processArchiveInWorker(file, (stage, detail) => {
+            setProgressStage(stage);
+            setProgressDetail(detail ?? '');
+          });
           archiveLogCount += result.logFiles.length;
           archiveYamlCount += result.yamlFiles.length;
 
@@ -114,11 +180,14 @@ export function UploadZone() {
             archiveParsedResults.push(result.parsedData);
           }
 
-          if (result.v2vData) {
-            archiveV2VResults.push(result.v2vData);
+          if (result.v2vFileEntries.length > 0) {
+            allV2VFileEntries.push(...result.v2vFileEntries);
           }
         } else {
           // ── Plain file (or gzip-compressed plain file) ────────────
+          setProgressStage('Reading file...');
+          setProgressDetail(file.name);
+
           const content = isGzipPlainFile(file.name)
             ? await decompressGzipToText(file)
             : await file.text();
@@ -128,9 +197,9 @@ export function UploadZone() {
             ? file.name.slice(0, -3)
             : file.name;
 
-          // NEW: detect v2v log and route to separate pipeline
+          // Detect v2v log and route to separate pipeline
           if (isV2VLog(content)) {
-            v2vContents.push(content);
+            v2vPlainFiles.push({ name: file.name, content });
             continue;
           }
 
@@ -142,48 +211,22 @@ export function UploadZone() {
         }
       }
 
-      // ── V2V logs: parse and store separately ────────────────────────
-      const hasV2V = v2vContents.length > 0 || archiveV2VResults.length > 0;
-      if (hasV2V) {
-        let v2vResult: V2VParsedData;
-
-        if (v2vContents.length > 0) {
-          // Plain v2v files — parse them
-          v2vResult = parseV2VLog(v2vContents.join('\n'));
-          const v2vFileNames = valid.filter(f => !isArchiveFile(f.name)).map(f => f.name);
-          v2vResult.fileName = v2vFileNames.join(', ');
-
-          // Merge archive v2v results by appending tool runs
-          for (const archiveV2V of archiveV2VResults) {
-            v2vResult.toolRuns.push(...archiveV2V.toolRuns);
-            v2vResult.totalLines += archiveV2V.totalLines;
-            if (archiveV2V.fileName) {
-              v2vResult.fileName = v2vResult.fileName
-                ? `${v2vResult.fileName}, ${archiveV2V.fileName}`
-                : archiveV2V.fileName;
-            }
-          }
-        } else {
-          // Only archive v2v results
-          v2vResult = archiveV2VResults[0];
-          for (let i = 1; i < archiveV2VResults.length; i++) {
-            v2vResult.toolRuns.push(...archiveV2VResults[i].toolRuns);
-            v2vResult.totalLines += archiveV2VResults[i].totalLines;
-            if (archiveV2VResults[i].fileName) {
-              v2vResult.fileName = v2vResult.fileName
-                ? `${v2vResult.fileName}, ${archiveV2VResults[i].fileName}`
-                : archiveV2VResults[i].fileName;
-            }
-          }
+      // ── V2V logs: parse each file individually and store ────────────
+      if (v2vPlainFiles.length > 0) {
+        setProgressStage('Parsing V2V logs...');
+        for (const f of v2vPlainFiles) {
+          const data = parseV2VLog(f.content);
+          data.fileName = f.name;
+          allV2VFileEntries.push({ filePath: f.name, data });
         }
+      }
 
-        useV2VStore.getState().setV2VData(v2vResult);
+      if (allV2VFileEntries.length > 0) {
+        useV2VStore.getState().setV2VFileEntries(allV2VFileEntries);
 
-        const stageCount = v2vResult.toolRuns.reduce((sum, r) => sum + r.stages.length, 0);
-        const errorCount = v2vResult.toolRuns.reduce((sum, r) => sum + r.errors.filter(e => e.level === 'error').length, 0);
-        const v2vFileCount = v2vContents.length + archiveV2VResults.length;
+        const totalRuns = allV2VFileEntries.reduce((sum, e) => sum + e.data.toolRuns.length, 0);
         showToast(
-          `Processed ${v2vFileCount} v2v log file${v2vFileCount !== 1 ? 's' : ''}: ${v2vResult.toolRuns.length} tool run${v2vResult.toolRuns.length !== 1 ? 's' : ''}, ${stageCount} stages, ${errorCount} error${errorCount !== 1 ? 's' : ''}`,
+          `Found ${allV2VFileEntries.length} v2v log file${allV2VFileEntries.length !== 1 ? 's' : ''} with ${totalRuns} tool run${totalRuns !== 1 ? 's' : ''}`,
           'success',
         );
 
@@ -196,16 +239,19 @@ export function UploadZone() {
       // Parse all plain log files together
       let logResult: ParsedData | null = null;
       if (logContents.length > 0) {
+        setProgressStage('Parsing log files...');
         logResult = parseLogFile(logContents.join('\n'));
       }
 
       // Parse all plain YAML files together
       let yamlResult: ParsedData | null = null;
       if (yamlContents.length > 0) {
+        setProgressStage('Parsing YAML files...');
         yamlResult = parsePlanYaml(yamlContents.join('\n---\n'));
       }
 
       // Merge plain logs + plain YAML (logs primary, YAML enriches)
+      setProgressStage('Merging results...');
       let combined = mergeResults(logResult, yamlResult);
 
       // Merge in archive results
@@ -247,6 +293,8 @@ export function UploadZone() {
       showToast('Failed to parse files', 'error');
     } finally {
       setIsProcessing(false);
+      setProgressStage('');
+      setProgressDetail('');
     }
   }, [clearData, setParseResult, showToast]);
 
@@ -307,7 +355,7 @@ export function UploadZone() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".log,.logs,.txt,.json,.yaml,.yml,.gz,.tar,.tar.gz,.tgz"
+          accept=".log,.logs,.txt,.json,.yaml,.yml,.gz,.tar,.tar.gz,.tgz,.zip"
           onChange={handleFileInputChange}
           className="hidden"
         />
@@ -315,7 +363,14 @@ export function UploadZone() {
         {isProcessing ? (
           <div className="flex flex-col items-center gap-3">
             <div className="w-8 h-8 border-2 border-pink-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-slate-500 dark:text-gray-400">Processing files...</p>
+            <p className="text-slate-600 dark:text-gray-300 font-medium">
+              {progressStage || 'Processing files...'}
+            </p>
+            {progressDetail && (
+              <p className="text-slate-400 dark:text-gray-500 text-xs font-mono max-w-md truncate">
+                {progressDetail}
+              </p>
+            )}
           </div>
         ) : (
           <>
@@ -339,7 +394,7 @@ export function UploadZone() {
               Upload forklift logs, virt-v2v/inspector logs, Plan YAMLs, and archives
             </p>
             <p className="text-slate-500 dark:text-gray-400 text-xs mt-1">
-              .log, .logs, .txt, .json, .yaml, .yml, .log.gz, .tar, .tar.gz, .tgz
+              .log, .logs, .txt, .json, .yaml, .yml, .log.gz, .tar, .tar.gz, .tgz, .zip
             </p>
           </>
         )}

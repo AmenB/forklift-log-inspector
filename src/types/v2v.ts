@@ -321,3 +321,15 @@ export interface V2VParsedData {
   totalLines: number;
   fileName?: string;
 }
+
+/** A single V2V log file with its path and individually parsed data */
+export interface V2VFileEntry {
+  /** Archive path of the log file */
+  filePath: string;
+  /** Parsed V2V data for this single file */
+  data: V2VParsedData;
+  /** Plan name extracted from the archive path (if identifiable) */
+  planName?: string;
+  /** VM ID extracted from the archive path (if identifiable) */
+  vmId?: string;
+}

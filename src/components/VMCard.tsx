@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import type { VM, RawLogEntry, PhaseIteration } from '../types';
 import { PhasePipeline } from './PhasePipeline';
 import { PhaseLogsModal } from './PhaseLogsModal';
@@ -8,12 +8,15 @@ import { formatDuration, computePhaseLogSummaries } from '../parser/utils';
 import { formatDateLocale } from '../utils/dateUtils';
 import { getResourceColorClass } from '../utils/badgeUtils';
 import { PrecopyLoopPhasesSet } from '../parser/constants';
+import { useV2VStore } from '../store/useV2VStore';
+import { useStore } from '../store/useStore';
 
 interface VMCardProps {
   vm: VM;
+  planName?: string;
 }
 
-export function VMCard({ vm }: VMCardProps) {
+export function VMCard({ vm, planName: _planName }: VMCardProps) {
   const [selectedPhase, setSelectedPhase] = useState<string | null>(null);
   const [showCycleLogs, setShowCycleLogs] = useState(false);
   const [showRawLogs, setShowRawLogs] = useState(false);
@@ -68,6 +71,27 @@ export function VMCard({ vm }: VMCardProps) {
     return Object.values(vm.phaseLogs).reduce((sum, logs) => sum + logs.length, 0);
   }, [vm.phaseLogs]);
 
+  // Check if this VM has associated V2V logs
+  const v2vFileEntries = useV2VStore((s) => s.v2vFileEntries);
+  const setViewMode = useStore((s) => s.setViewMode);
+
+  /** Index of the first V2V file entry matching this VM (or -1) */
+  const v2vFileIndex = useMemo(() => {
+    if (v2vFileEntries.length === 0) return -1;
+    const vmIdClean = vm.id.replace(/^vm-/, '');
+    const suffix = `-vm-${vmIdClean}-`;
+    return v2vFileEntries.findIndex((e) => e.filePath.includes(suffix));
+  }, [v2vFileEntries, vm.id]);
+
+  const hasV2VLogs = v2vFileIndex >= 0;
+
+  const handleNavigateV2V = useCallback(() => {
+    if (v2vFileIndex >= 0) {
+      useV2VStore.getState().setSelectedFile(v2vFileIndex);
+    }
+    setViewMode('v2v');
+  }, [v2vFileIndex, setViewMode]);
+
   return (
     <>
       <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-4 space-y-4">
@@ -92,6 +116,20 @@ export function VMCard({ vm }: VMCardProps) {
               <span className="text-slate-500 dark:text-gray-400" title="Duration">
                 {duration}
               </span>
+            )}
+            {hasV2VLogs && (
+              <button
+                onClick={handleNavigateV2V}
+                className="px-3 py-1 rounded-lg text-xs font-medium
+                           bg-purple-50 dark:bg-purple-500/10 hover:bg-purple-100 dark:hover:bg-purple-500/20
+                           text-purple-600 dark:text-purple-400 transition-colors flex items-center gap-1.5"
+                title="View V2V log analysis for this VM"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                V2V Logs
+              </button>
             )}
             <button
               onClick={() => setShowRawLogs(true)}

@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Plan, Event, ParseStats, Summary, ParsedData } from '../types';
 
+export type ViewMode = 'plans' | 'v2v';
+
 interface AppState {
   // Data
   plans: Plan[];
@@ -18,6 +20,7 @@ interface AppState {
   expandedPlans: string[];
   selectedPlanIndex: number;
   showKeyboardHelp: boolean;
+  viewMode: ViewMode;
   
   // Actions
   setParseResult: (result: ParsedData) => void;
@@ -34,6 +37,7 @@ interface AppState {
   navigatePlan: (direction: 'up' | 'down') => void;
   toggleSelectedPlanExpanded: () => void;
   setShowKeyboardHelp: (show: boolean) => void;
+  setViewMode: (mode: ViewMode) => void;
 }
 
 const initialStats: ParseStats = {
@@ -82,6 +86,7 @@ export const useStore = create<AppState>()(
       expandedPlans: [],
       selectedPlanIndex: -1,
       showKeyboardHelp: false,
+      viewMode: 'plans',
       
       // Actions
       setParseResult: (result: ParsedData) => {
@@ -102,6 +107,7 @@ export const useStore = create<AppState>()(
           summary: initialSummary,
           expandedPlans: [],
           selectedPlanIndex: -1,
+          viewMode: 'plans',
         });
       },
       
@@ -188,6 +194,10 @@ export const useStore = create<AppState>()(
       setShowKeyboardHelp: (show: boolean) => {
         set({ showKeyboardHelp: show });
       },
+      
+      setViewMode: (mode: ViewMode) => {
+        set({ viewMode: mode });
+      },
     }),
     {
       name: 'forklift-log-inspector',
@@ -211,3 +221,4 @@ export const useStatusFilter = () => useStore((state) => state.statusFilter);
 export const useSelectedPlanIndex = () => useStore((state) => state.selectedPlanIndex);
 export const useShowKeyboardHelp = () => useStore((state) => state.showKeyboardHelp);
 export const useDevMode = () => useStore((state) => state.devMode);
+export const useViewMode = () => useStore((state) => state.viewMode);
